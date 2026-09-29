@@ -108,6 +108,8 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
         gender: s.gender,
         dateOfBirth: s.dateOfBirth,
         status: s.status,
+        cancellationReason: s.cancellationReason,
+        cancelledAt: s.cancelledAt,
         admissionDate: s.admissionDate,
         className: currentAcademic?.class?.name || 'Unassigned',
         classId: currentAcademic?.classId,
@@ -273,6 +275,51 @@ export const updateStudentStatus = async (req: AuthenticatedRequest, res: Respon
     });
 
     res.json({ success: true, message: 'Student status updated successfully', data: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const addStudentDocument = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { title, documentType } = req.body;
+
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'No file uploaded' });
+      return;
+    }
+
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) {
+      res.status(404).json({ success: false, message: 'Student not found' });
+      return;
+    }
+
+    const fileUrl = `/uploads/documents/${req.file.filename}`;
+    const doc = await prisma.studentDocument.create({
+      data: {
+        studentId: id,
+        documentType: documentType || 'OTHER',
+        title: title || req.file.originalname,
+        fileUrl,
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype
+      }
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'UPLOAD_DOCUMENT',
+      module: 'STUDENTS',
+      recordId: id,
+      newData: { documentId: doc.id, title: doc.title, fileName: doc.fileName },
+      ipAddress: req.ip
+    });
+
+    res.status(201).json({ success: true, message: 'Document added successfully', data: doc });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

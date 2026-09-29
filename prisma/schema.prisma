@@ -27,6 +27,7 @@ enum StudentStatus {
   ALUMNI
   SUSPENDED
   WITHDRAWN
+  CANCELLED
 }
 
 enum FeeStatus {
@@ -175,11 +176,14 @@ model Student {
   city            String?
   state           String?
   pincode         String?
-  emergencyPhone  String?
-  photoUrl        String?
-  status          StudentStatus @default(ACTIVE)
-  admissionDate   DateTime      @default(now())
-  previousSchool  String?
+  emergencyPhone     String?
+  photoUrl           String?
+  status             StudentStatus @default(ACTIVE)
+  cancellationReason String?       @db.Text
+  cancelledAt        DateTime?
+  cancellationNotes  String?       @db.Text
+  admissionDate      DateTime      @default(now())
+  previousSchool     String?
   previousClass   String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -240,8 +244,8 @@ model StudentDocument {
   title        String
   fileUrl      String
   fileName     String
-  fileSize     Int
-  mimeType     String
+  fileSize     Int      @default(0)
+  mimeType     String   @default("application/octet-stream")
   uploadedAt   DateTime @default(now())
 
   student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)

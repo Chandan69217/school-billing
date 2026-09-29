@@ -18,7 +18,11 @@ import {
   Layers,
   Settings,
   Clock,
-  Sparkles
+  Sparkles,
+  Download,
+  Trash2,
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { apiClient } from '../api/client.js';
@@ -116,16 +120,85 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     rollNumber: ''
   });
 
-  // Step 4: Documents Upload Simulation
+  // Step 4: Documents Upload
   const [documents, setDocuments] = useState<any[]>([
-    { documentType: 'BIRTH_CERTIFICATE', title: 'Birth Certificate', fileUrl: 'https://docs.google.com/sample_birth_cert.pdf', fileName: 'birth_cert.pdf', uploaded: true },
-    { documentType: 'AADHAAR', title: 'Aadhaar Card Copy', fileUrl: 'https://docs.google.com/sample_aadhaar.pdf', fileName: 'aadhaar_card.pdf', uploaded: true },
+    { documentType: 'BIRTH_CERTIFICATE', title: 'Birth Certificate', fileUrl: '', fileName: '', uploaded: false },
+    { documentType: 'AADHAAR', title: 'Aadhaar Card Copy', fileUrl: '', fileName: '', uploaded: false },
     { documentType: 'TRANSFER_CERTIFICATE', title: 'Transfer Certificate (TC)', fileUrl: '', fileName: '', uploaded: false },
+    { documentType: 'PREVIOUS_MARKSHEET', title: 'Previous School Marksheet / Progress Card', fileUrl: '', fileName: '', uploaded: false },
   ]);
 
+  const [uploadingDocIdx, setUploadingDocIdx] = useState<number | null>(null);
+  const [customDocTitle, setCustomDocTitle] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [admissionSuccess, setAdmissionSuccess] = useState<any | null>(null);
+
+  // File Upload Handler
+  const handleFileUpload = async (idx: number, file: File) => {
+    if (!file) return;
+    setUploadingDocIdx(idx);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await apiClient.post('/admissions/upload-document', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data?.success) {
+        const { fileUrl, fileName, fileSize, mimeType } = res.data.data;
+        setDocuments(prev => {
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            fileUrl,
+            fileName: fileName || file.name,
+            fileSize: fileSize || file.size,
+            mimeType: mimeType || file.type,
+            uploaded: true
+          };
+          return updated;
+        });
+        toast.success(`"${file.name}" uploaded successfully`);
+      } else {
+        toast.error(res.data?.message || 'Upload failed');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to upload document file');
+    } finally {
+      setUploadingDocIdx(null);
+    }
+  };
+
+  const handleRemoveDoc = (idx: number) => {
+    setDocuments(prev => {
+      const updated = [...prev];
+      updated[idx] = {
+        ...updated[idx],
+        fileUrl: '',
+        fileName: '',
+        uploaded: false
+      };
+      return updated;
+    });
+  };
+
+  const handleAddCustomDoc = () => {
+    if (!customDocTitle.trim()) return;
+    const docType = customDocTitle.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    setDocuments(prev => [
+      ...prev,
+      {
+        documentType: docType,
+        title: customDocTitle.trim(),
+        fileUrl: '',
+        fileName: '',
+        uploaded: false
+      }
+    ]);
+    setCustomDocTitle('');
+  };
 
   // Fetch classes and academic years
   const fetchMetadata = async () => {
@@ -390,6 +463,16 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
 
               {/* Next Action Buttons */}
               <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <a
+                  href={`/api/students/${admissionSuccess.studentId}/admission-pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700 shadow-sm transition-colors"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Download Admission Slip (PDF)</span>
+                </a>
+
                 <button
                   onClick={() => onOpenFeeCollectionForStudent(admissionSuccess.studentId)}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs transition-colors"
@@ -914,53 +997,145 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
 
                 {/* Step 4: Documents Upload */}
                 {currentStep === 4 && (
-                  <div className="space-y-4">
-                    <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
-                      Step 4: Mandatory Enrollment Documents
-                    </h2>
+                  <div className="space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-sm font-bold text-slate-900">
+                          Step 4: Upload Admission Documents
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Upload digital copies (PDF, JPG, PNG up to 10MB) for verification and student record archive.
+                        </p>
+                      </div>
+                    </div>
 
                     <div className="space-y-3">
                       {documents.map((doc, idx) => (
                         <div
-                          key={doc.documentType}
-                          className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-slate-50/50"
+                          key={doc.documentType + idx}
+                          className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 rounded-xl border transition-all gap-3 ${
+                            doc.uploaded
+                              ? 'border-emerald-200 bg-emerald-50/30'
+                              : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50'
+                          }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-lg ${doc.uploaded ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={`p-2.5 rounded-lg shrink-0 ${
+                                doc.uploaded
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-slate-200 text-slate-500'
+                              }`}
+                            >
                               <FileText className="h-4 w-4" />
                             </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-900">{doc.title}</div>
-                              <div className="text-[11px] text-slate-500">
-                                {doc.uploaded ? `${doc.fileName} · Verified` : 'Not uploaded yet'}
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-slate-900 truncate">
+                                {doc.title}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                                {doc.uploaded ? (
+                                  <>
+                                    <span className="font-medium text-emerald-800 font-mono truncate max-w-xs">
+                                      {doc.fileName}
+                                    </span>
+                                    {doc.fileSize ? (
+                                      <span className="text-[10px] text-slate-400">
+                                        ({Math.round(doc.fileSize / 1024)} KB)
+                                      </span>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  <span className="text-slate-400">PDF, JPG, PNG up to 10MB</span>
+                                )}
                               </div>
                             </div>
                           </div>
 
-                          <div>
+                          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                             {doc.uploaded ? (
-                              <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1">
-                                <Check className="h-3.5 w-3.5" /> Attached
-                              </span>
+                              <>
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                  <Check className="h-3 w-3" /> Attached
+                                </span>
+
+                                {doc.fileUrl && (
+                                  <a
+                                    href={doc.fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                                  >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                    <span>View</span>
+                                  </a>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveDoc(idx)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                  title="Remove / Replace File"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = [...documents];
-                                  updated[idx].uploaded = true;
-                                  updated[idx].fileName = `${doc.documentType.toLowerCase()}.pdf`;
-                                  updated[idx].fileUrl = 'https://docs.sample/sample.pdf';
-                                  setDocuments(updated);
-                                }}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                <Upload className="h-3.5 w-3.5" />
-                                <span>Upload File</span>
-                              </button>
+                              <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs cursor-pointer transition-colors">
+                                {uploadingDocIdx === idx ? (
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    <span>Uploading...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload className="h-3.5 w-3.5" />
+                                    <span>Choose File</span>
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
+                                  disabled={uploadingDocIdx === idx}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleFileUpload(idx, file);
+                                  }}
+                                />
+                              </label>
                             )}
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    {/* Add Custom Document Input */}
+                    <div className="pt-2 border-t border-slate-200">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Add another document (e.g. Income Certificate, Medical Record, Caste Certificate)"
+                          value={customDocTitle}
+                          onChange={(e) => setCustomDocTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddCustomDoc();
+                            }
+                          }}
+                          className="flex-1 rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddCustomDoc}
+                          disabled={!customDocTitle.trim()}
+                          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Add Document Head</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

@@ -14,9 +14,16 @@ import {
   Receipt,
   Download,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  UserX,
+  Upload,
+  Check,
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { apiClient } from '../../api/client.js';
+import { CancelAdmissionModal } from '../admissions/CancelAdmissionModal.js';
 
 interface StudentProfileModalProps {
   studentId: string | null;
@@ -36,6 +43,20 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
   const [student, setStudent] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'fees' | 'payments' | 'documents'>('overview');
   const [loading, setLoading] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocType, setNewDocType] = useState('OTHER');
+
+  const reloadStudent = () => {
+    if (studentId) {
+      apiClient.get(`/students/${studentId}`).then(res => {
+        if (res.data?.success) {
+          setStudent(res.data.data);
+        }
+      }).catch(console.error);
+    }
+  };
 
   useEffect(() => {
     if (studentId && isOpen) {
@@ -49,6 +70,35 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
       setStudent(null);
     }
   }, [studentId, isOpen]);
+
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !studentId) return;
+
+    setUploadingDoc(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', newDocTitle.trim() || file.name);
+      formData.append('documentType', newDocType);
+
+      const res = await apiClient.post(`/students/${studentId}/documents`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data?.success) {
+        toast.success('Document uploaded successfully');
+        setNewDocTitle('');
+        reloadStudent();
+      } else {
+        toast.error(res.data?.message || 'Upload failed');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to upload document');
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -75,7 +125,11 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
                     {student?.admissionNumber}
                   </span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    student?.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                    student?.status === 'ACTIVE'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : student?.status === 'CANCELLED'
+                      ? 'bg-rose-100 text-rose-800'
+                      : 'bg-slate-100 text-slate-600'
                   }`}>
                     {student?.status}
                   </span>
@@ -90,14 +144,40 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60">
-              {student?.feeSummary?.pending > 0 && (
+            <div className="flex items-center gap-2 justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60 flex-wrap">
+              {/* Admission PDF Download Button */}
+              {student && (
+                <a
+                  href={`/api/students/${student.id}/admission-pdf`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 shadow-2xs min-h-[40px] transition-colors"
+                  title="Download Official Admission Slip PDF"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Admission PDF</span>
+                </a>
+              )}
+
+              {/* Cancel Admission Button if active */}
+              {student && student.status !== 'CANCELLED' && (
+                <button
+                  onClick={() => setShowCancelModal(true)}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 text-xs font-semibold min-h-[40px] transition-colors"
+                  title="Cancel Student Admission"
+                >
+                  <UserX className="h-4 w-4" />
+                  <span>Cancel Admission</span>
+                </button>
+              )}
+
+              {student?.feeSummary?.pending > 0 && student.status !== 'CANCELLED' && (
                 <button
                   onClick={() => {
                     onClose();
                     onCollectFee(student.id);
                   }}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-2xs min-h-[40px] transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-2xs min-h-[40px] transition-colors"
                 >
                   <CreditCard className="h-4 w-4" />
                   <span>Collect Fee</span>
@@ -114,6 +194,25 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Cancellation Alert Banner if Cancelled */}
+        {student?.status === 'CANCELLED' && (
+          <div className="p-3 bg-rose-50 border-b border-rose-200 text-xs text-rose-800 flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="font-bold">Admission Cancelled:</strong>{' '}
+              {student.cancellationReason || 'De-registered from school roll'}
+              {student.cancelledAt && (
+                <span className="text-rose-600 ml-1.5">
+                  (Cancelled on {new Date(student.cancelledAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })})
+                </span>
+              )}
+              {student.cancellationNotes && (
+                <p className="text-[11px] text-rose-700 mt-0.5 italic">Remarks: {student.cancellationNotes}</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Fee Metrics Bar: 2x2 on mobile, 4-col on tablet/desktop */}
         {student && (
@@ -362,35 +461,89 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
 
               {/* Tab 4: Documents */}
               {activeTab === 'documents' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Upload New Document Box */}
+                  <div className="p-3.5 sm:p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                    <span className="text-xs font-bold text-slate-800 block">
+                      Upload Supporting Document
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <input
+                        type="text"
+                        placeholder="Document Title (e.g. TC, Marksheet)"
+                        value={newDocTitle}
+                        onChange={(e) => setNewDocTitle(e.target.value)}
+                        className="rounded-lg border border-slate-300 py-1.5 px-3 text-xs bg-white focus:outline-hidden"
+                      />
+                      <select
+                        value={newDocType}
+                        onChange={(e) => setNewDocType(e.target.value)}
+                        className="rounded-lg border border-slate-300 py-1.5 px-3 text-xs bg-white"
+                      >
+                        <option value="BIRTH_CERTIFICATE">Birth Certificate</option>
+                        <option value="AADHAAR">Aadhaar Card Copy</option>
+                        <option value="TRANSFER_CERTIFICATE">Transfer Certificate (TC)</option>
+                        <option value="PREVIOUS_MARKSHEET">Previous School Marksheet</option>
+                        <option value="PHOTO">Passport Photo</option>
+                        <option value="OTHER">Other Official Document</option>
+                      </select>
+                      <label className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-2xs cursor-pointer transition-colors">
+                        {uploadingDoc ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Uploading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="h-3.5 w-3.5" />
+                            <span>Choose & Upload File</span>
+                          </>
+                        )}
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={uploadingDoc}
+                          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
+                          onChange={handleDocUpload}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {student.documents?.map((doc: any) => (
                       <div
                         key={doc.id}
-                        className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-slate-50"
+                        className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/60 transition-colors"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-indigo-100 text-indigo-700">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="p-2.5 rounded-lg bg-indigo-100 text-indigo-700 shrink-0">
                             <FileText className="h-4 w-4" />
                           </div>
-                          <div>
-                            <div className="text-xs font-bold text-slate-900">{doc.title}</div>
-                            <div className="text-[11px] text-slate-400 font-mono">{doc.documentType}</div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 truncate">{doc.title}</div>
+                            <div className="text-[11px] text-slate-400 font-mono truncate">{doc.fileName || doc.documentType}</div>
+                            {doc.uploadedAt && (
+                              <div className="text-[10px] text-slate-400">
+                                Uploaded on {new Date(doc.uploadedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <a
                           href={doc.fileUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shrink-0"
                         >
-                          View File
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span>View</span>
                         </a>
                       </div>
                     ))}
                     {(!student.documents || student.documents.length === 0) && (
                       <div className="col-span-2 py-8 text-center text-xs text-slate-400">
-                        No documents uploaded for this student.
+                        No documents uploaded for this student yet.
                       </div>
                     )}
                   </div>
@@ -400,6 +553,21 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
           ) : null}
         </div>
       </div>
+
+      {/* Cancel Admission Confirmation Modal */}
+      <CancelAdmissionModal
+        isOpen={showCancelModal}
+        student={student ? {
+          id: student.id,
+          admissionNumber: student.admissionNumber,
+          fullName: `${student.firstName} ${student.lastName}`,
+          className: currentAcademic?.class?.name
+        } : null}
+        onClose={() => setShowCancelModal(false)}
+        onSuccess={() => {
+          reloadStudent();
+        }}
+      />
     </div>
   );
 };

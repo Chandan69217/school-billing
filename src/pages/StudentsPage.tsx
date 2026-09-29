@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { apiClient } from '../api/client.js';
 import { StudentProfileModal } from '../components/students/StudentProfileModal.js';
+import { CancelAdmissionModal } from '../components/admissions/CancelAdmissionModal.js';
 
 interface StudentsPageProps {
   onOpenFeeCollection: (studentId?: string) => void;
@@ -45,6 +46,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [cancelStudent, setCancelStudent] = useState<any | null>(null);
 
   useEffect(() => {
     if (studentIdParam) {
@@ -153,7 +155,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
         {/* Filter controls: Grid on tablet/desktop, collapsible drawer/stack on mobile */}
         <form
           onSubmit={handleSearchSubmit}
-          className={`${mobileFiltersOpen ? 'grid' : 'hidden'} sm:grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100`}
+          className={`${mobileFiltersOpen ? 'grid' : 'hidden'} sm:grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100`}
         >
           {/* Desktop Search input (hidden on mobile since shown above) */}
           <div className="relative hidden sm:block">
@@ -185,6 +187,25 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
             </select>
           </div>
 
+          {/* Admission / Student Status Filter */}
+          <div>
+            <label className="text-[11px] font-semibold text-slate-500 block mb-1 sm:hidden">Admission Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
+              className="w-full rounded-lg border border-slate-200 py-2 px-3 text-xs bg-white min-h-[44px] sm:min-h-[42px]"
+            >
+              <option value="ACTIVE">Active Students</option>
+              <option value="CANCELLED">Cancelled Admissions</option>
+              <option value="ALL">All Statuses</option>
+              <option value="INACTIVE">Inactive</option>
+              <option value="WITHDRAWN">Withdrawn</option>
+            </select>
+          </div>
+
           {/* Fee Status Filter */}
           <div>
             <label className="text-[11px] font-semibold text-slate-500 block mb-1 sm:hidden">Fee Status</label>
@@ -207,7 +228,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
               type="submit"
               className="w-full py-2 px-4 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 min-h-[44px] sm:min-h-[42px] transition-colors"
             >
-              Search Records
+              Search
             </button>
             <button
               type="button"
@@ -251,6 +272,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
                   <th className="py-3 px-4">Student Name</th>
                   <th className="py-3 px-4">Class & Section</th>
                   <th className="py-3 px-4">Parent Details</th>
+                  <th className="py-3 px-4 text-center">Enrollment Status</th>
                   <th className="py-3 px-4 text-right">Total Outstanding</th>
                   <th className="py-3 px-4 text-center">Fee Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -263,6 +285,11 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
                     <td className="py-3 px-4">
                       <div className="font-semibold text-slate-900">{s.fullName}</div>
                       <div className="text-[10px] text-slate-400">DOB: {new Date(s.dateOfBirth).toLocaleDateString()}</div>
+                      {s.status === 'CANCELLED' && s.cancellationReason && (
+                        <div className="text-[10px] text-rose-600 font-medium italic mt-0.5 truncate max-w-xs" title={s.cancellationReason}>
+                          Reason: {s.cancellationReason}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-medium text-slate-800">{s.className} ({s.sectionName})</div>
@@ -271,6 +298,15 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
                     <td className="py-3 px-4">
                       <div className="text-slate-800 font-medium">{s.parentName}</div>
                       <div className="text-[10px] text-slate-500 font-mono">{s.parentPhone}</div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                        s.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                        s.status === 'CANCELLED' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                        'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}>
+                        {s.status}
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
                       {s.feeSummary?.pending > 0 ? (
@@ -290,7 +326,18 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                        {/* Download Admission Slip PDF */}
+                        <a
+                          href={`/api/students/${s.id}/admission-pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded"
+                          title="Download Admission Slip PDF"
+                        >
+                          <Download className="h-4 w-4" />
+                        </a>
+
                         <button
                           onClick={() => {
                             setSelectedStudentId(s.id);
@@ -302,13 +349,29 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
                           <Eye className="h-4 w-4" />
                         </button>
 
-                        {s.feeSummary?.pending > 0 && (
+                        {s.status !== 'CANCELLED' && s.feeSummary?.pending > 0 && (
                           <button
                             onClick={() => onOpenFeeCollection(s.id)}
-                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded"
+                            className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded"
                             title="Collect Fee"
                           >
                             <CreditCard className="h-4 w-4" />
+                          </button>
+                        )}
+
+                        {/* Cancel Admission */}
+                        {s.status !== 'CANCELLED' && (
+                          <button
+                            onClick={() => setCancelStudent({
+                              id: s.id,
+                              admissionNumber: s.admissionNumber,
+                              fullName: s.fullName,
+                              className: `${s.className} - Section ${s.sectionName || 'A'}`
+                            })}
+                            className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded"
+                            title="Cancel Student Admission"
+                          >
+                            <UserX className="h-4 w-4" />
                           </button>
                         )}
                       </div>
@@ -358,6 +421,16 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({
         onClose={() => setIsProfileOpen(false)}
         onCollectFee={(id) => onOpenFeeCollection(id)}
         onOpenReceipt={onOpenReceipt}
+      />
+
+      {/* Cancel Admission Modal */}
+      <CancelAdmissionModal
+        isOpen={!!cancelStudent}
+        student={cancelStudent}
+        onClose={() => setCancelStudent(null)}
+        onSuccess={() => {
+          fetchStudents();
+        }}
       />
     </div>
   );

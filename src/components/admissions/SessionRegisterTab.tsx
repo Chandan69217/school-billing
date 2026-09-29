@@ -12,9 +12,12 @@ import {
   Download,
   Plus,
   RefreshCw,
-  ArrowRight
+  ArrowRight,
+  UserX,
+  FileText
 } from 'lucide-react';
 import { apiClient } from '../../api/client.js';
+import { CancelAdmissionModal } from './CancelAdmissionModal.js';
 
 interface SessionRegisterTabProps {
   sessions: any[];
@@ -38,6 +41,7 @@ export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState('');
+  const [cancelModalStudent, setCancelModalStudent] = useState<any | null>(null);
 
   const currentSession = sessions.find(s => s.id === selectedSessionId) || sessions[0];
 
@@ -337,7 +341,19 @@ export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
                     </td>
 
                     <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                        {/* Admission Slip PDF */}
+                        <a
+                          href={`/api/students/${s.studentId}/admission-pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[11px] font-semibold transition-colors"
+                          title="Download Admission Slip PDF"
+                        >
+                          <Download className="h-3 w-3" />
+                          <span>Slip</span>
+                        </a>
+
                         <button
                           onClick={() => onOpenFeeCollectionForStudent(s.studentId)}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[11px] font-semibold transition-colors"
@@ -355,6 +371,27 @@ export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
                           <User className="h-3 w-3" />
                           <span>Profile</span>
                         </button>
+
+                        {/* Cancel Admission Button if active */}
+                        {s.status !== 'CANCELLED' ? (
+                          <button
+                            onClick={() => setCancelModalStudent({
+                              id: s.studentId,
+                              admissionNumber: s.admissionNumber,
+                              fullName: s.fullName,
+                              className: `${s.className} - Section ${s.sectionName || 'A'}`
+                            })}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-50 text-rose-700 hover:bg-rose-100 text-[11px] font-semibold transition-colors"
+                            title="Cancel Student Admission"
+                          >
+                            <UserX className="h-3 w-3" />
+                            <span>Cancel</span>
+                          </button>
+                        ) : (
+                          <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded">
+                            Cancelled
+                          </span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -364,6 +401,14 @@ export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Cancel Admission Modal */}
+      <CancelAdmissionModal
+        isOpen={!!cancelModalStudent}
+        student={cancelModalStudent}
+        onClose={() => setCancelModalStudent(null)}
+        onSuccess={fetchSessionStudents}
+      />
     </div>
   );
 };

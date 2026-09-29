@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticateJwt, requireRoles } from '../middleware/auth.js';
+import { documentUpload } from '../middleware/upload.js';
 import * as authCtrl from '../controllers/authController.js';
 import * as dashCtrl from '../controllers/dashboardController.js';
 import * as acadCtrl from '../controllers/academicController.js';
@@ -45,11 +46,17 @@ router.post('/classes/:classId/sections', authenticateJwt, requireRoles(['SUPER_
 // Admissions & Students
 // -------------------------------------------------------------
 router.post('/admissions', authenticateJwt, requireRoles(['SUPER_ADMIN', 'PRINCIPAL', 'ADMISSION_STAFF']), admitCtrl.processAdmission);
+router.post('/admissions/upload-document', authenticateJwt, documentUpload.single('file') as any, admitCtrl.uploadDocument);
+router.post('/admissions/:id/cancel', authenticateJwt, requireRoles(['SUPER_ADMIN', 'PRINCIPAL', 'ADMISSION_STAFF']), admitCtrl.cancelAdmission);
+router.get('/admissions/:id/pdf', admitCtrl.getAdmissionPdf);
 
 router.get('/students', authenticateJwt, studCtrl.getStudents);
 router.get('/students/:id', authenticateJwt, studCtrl.getStudentById);
+router.get('/students/:id/admission-pdf', admitCtrl.getAdmissionPdf);
+router.post('/students/:id/documents', authenticateJwt, documentUpload.single('file') as any, studCtrl.addStudentDocument);
 router.put('/students/:id', authenticateJwt, requireRoles(['SUPER_ADMIN', 'PRINCIPAL', 'ADMISSION_STAFF']), studCtrl.updateStudent);
 router.put('/students/:id/status', authenticateJwt, requireRoles(['SUPER_ADMIN', 'PRINCIPAL']), studCtrl.updateStudentStatus);
+router.put('/students/:id/cancel-admission', authenticateJwt, requireRoles(['SUPER_ADMIN', 'PRINCIPAL', 'ADMISSION_STAFF']), admitCtrl.cancelAdmission);
 
 // -------------------------------------------------------------
 // Fee Management

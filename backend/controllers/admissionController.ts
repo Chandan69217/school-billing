@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PrismaClient, Gender, StudentStatus, FeeStatus } from '@prisma/client';
 import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { generateAdmissionPdf } from '../utils/admissionPdf.js';
 
 const prisma = new PrismaClient();
 
@@ -234,3 +235,231 @@ export const processAdmission = async (req: AuthenticatedRequest, res: Response)
     res.status(500).json({ success: false, message: error.message || 'Admission failed' });
   }
 };
+
+/**
+ * Upload Admission Document (Birth Certificate, Aadhaar, TC, Marksheet)
+ */
+export const uploadDocument = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'No file uploaded. Please select a valid document.' });
+      return;
+    }
+
+    const fileUrl = `/uploads/documents/${req.file.filename}`;
+    res.json({
+      success: true,
+      message: 'Document uploaded successfully',
+      data: {
+        fileUrl,
+        fileName: req.file.originalname,
+        storedName: req.file.filename,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype
+      }
+    });
+  } catch (err: any) {
+    console.error('Document upload error:', err);
+    res.status(500).json({ success: false, message: err.message || 'Document upload failed' });
+  }
+};
+
+/**
+ * Cancel Student Admission
+ */
+export const cancelAdmission = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reason, notes, cancelPendingFees = true } = req.body;
+
+    if (!reason || !reason.trim()) {
+      res.status(400).json({ success: false, message: 'A valid cancellation reason is required' });
+      return;
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        academicRecords: {
+          include: { academicYear: true, class: true, section: true },
+          orderBy: { createdAt: 'desc' }
+        },
+        studentFees: true
+      }
+    });
+
+    if (!student) {
+      res.status(404).json({ success: false, message: 'Student record not found' });
+      return;
+    }
+
+    if (student.status === StudentStatus.CANCELLED) {
+      res.status(400).json({ success: false, message: 'This student admission is already cancelled' });
+      return;
+    }
+
+    const now = new Date();
+    const updatedStudent = await prisma.$transaction(async (tx) => {
+      const updated = await tx.student.update({
+        where: { id },
+        data: {
+          status: StudentStatus.CANCELLED,
+          cancellationReason: reason.trim(),
+          cancellationNotes: notes ? notes.trim() : null,
+          cancelledAt: now
+        }
+      });
+
+      // Optionally waive any pending/overdue fees
+      if (cancelPendingFees) {
+        await tx.studentFee.updateMany({
+          where: {
+            studentId: id,
+            status: { in: [FeeStatus.PENDING, FeeStatus.OVERDUE] }
+          },
+          data: {
+            status: FeeStatus.WAIVED
+          }
+        });
+      }
+
+      return updated;
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'CANCEL_ADMISSION',
+      module: 'ADMISSIONS',
+      recordId: student.id,
+      newData: {
+        admissionNumber: student.admissionNumber,
+        studentName: `${student.firstName} ${student.lastName}`,
+        reason: reason.trim(),
+        notes,
+        cancelPendingFees,
+        cancelledAt: now
+      },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: `Admission for ${student.firstName} ${student.lastName} (${student.admissionNumber}) has been cancelled.`,
+      data: updatedStudent
+    });
+  } catch (err: any) {
+    console.error('Cancel admission error:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to cancel admission' });
+  }
+};
+
+/**
+ * Generate and Stream Official Student Admission Slip PDF
+ */
+export const getAdmissionPdf = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        parents: { include: { parent: true } },
+        academicRecords: {
+          include: { academicYear: true, class: true, section: true },
+          orderBy: { createdAt: 'desc' }
+        },
+        documents: true,
+        studentFees: {
+          take: 6,
+          orderBy: { dueDate: 'asc' }
+        }
+      }
+    });
+
+    if (!student) {
+      res.status(404).json({ success: false, message: 'Student record not found' });
+      return;
+    }
+
+    const school = await prisma.schoolSettings.findFirst() || {
+      schoolName: 'Pragya Bharti Public School',
+      tagline: 'Knowledge, Character & Excellence (PBPS)',
+      address: 'Plot 42, Sector 18, Institutional Area, Knowledge Park',
+      phone: '+91 98765 43210',
+      email: 'admissions@pbps.edu.in',
+      registrationNumber: 'SCH-REG-2024-9981',
+      principalName: 'Dr. V. K. Sharma, Principal',
+      authorizedSignatory: 'Accounts Officer, PBPS'
+    };
+
+    const primaryParent = student.parents.find(p => p.isPrimary)?.parent || student.parents[0]?.parent;
+    const currentAcademic = student.academicRecords[0];
+
+    const pdfBuffer = await generateAdmissionPdf({
+      school: {
+        name: school.schoolName,
+        tagline: school.tagline || undefined,
+        address: school.address || 'Knowledge Park',
+        phone: school.phone || '+91 98765 43210',
+        email: school.email || 'admissions@pbps.edu.in',
+        registrationNumber: school.registrationNumber || undefined,
+        principalName: school.principalName || undefined,
+        authorizedSignatory: school.authorizedSignatory || undefined
+      },
+      student: {
+        admissionNumber: student.admissionNumber,
+        admissionDate: new Date(student.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        fullName: [student.firstName, student.middleName, student.lastName].filter(Boolean).join(' '),
+        dateOfBirth: new Date(student.dateOfBirth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        gender: student.gender,
+        bloodGroup: student.bloodGroup || undefined,
+        aadhaarNumber: student.aadhaarNumber || undefined,
+        nationality: student.nationality,
+        category: student.category || undefined,
+        address: student.address || undefined,
+        city: student.city || undefined,
+        state: student.state || undefined,
+        pincode: student.pincode || undefined,
+        emergencyPhone: student.emergencyPhone || undefined,
+        status: student.status,
+        cancellationReason: student.cancellationReason || undefined,
+        cancelledAt: student.cancelledAt ? new Date(student.cancelledAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : undefined
+      },
+      academic: {
+        sessionName: currentAcademic?.academicYear.name || '2026-27',
+        className: currentAcademic?.class.name || 'Class 1',
+        sectionName: currentAcademic?.section?.name || 'A',
+        rollNumber: currentAcademic?.rollNumber || undefined
+      },
+      parent: {
+        fatherName: primaryParent?.fatherName || undefined,
+        motherName: primaryParent?.motherName || undefined,
+        guardianName: primaryParent?.guardianName || undefined,
+        primaryPhone: primaryParent?.primaryPhone || '—',
+        alternatePhone: primaryParent?.alternatePhone || undefined,
+        email: primaryParent?.email || undefined,
+        occupation: primaryParent?.occupation || undefined,
+        relationship: student.parents[0]?.relationship || 'Father'
+      },
+      documents: student.documents.map(d => ({
+        title: d.title,
+        documentType: d.documentType,
+        fileName: d.fileName,
+        uploaded: true
+      })),
+      fees: student.studentFees.map(f => ({
+        title: f.title,
+        amount: Number(f.amount)
+      }))
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Admission_${student.admissionNumber}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    console.error('Admission PDF generation error:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to generate admission PDF' });
+  }
+};
+
