@@ -1,0 +1,515 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleType {
+  SUPER_ADMIN
+  PRINCIPAL
+  ACCOUNTANT
+  ADMISSION_STAFF
+  STAFF
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  ALUMNI
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum FeeStatus {
+  PAID
+  PARTIAL
+  PENDING
+  OVERDUE
+  WAIVED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+  ONLINE
+}
+
+enum PaymentStatus {
+  SUCCESS
+  PENDING
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum FeeFrequency {
+  ONE_TIME
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+// -------------------------------------------------------------
+// Authentication & RBAC
+// -------------------------------------------------------------
+
+model User {
+  id               String          @id @default(uuid())
+  email            String          @unique
+  username         String          @unique
+  passwordHash     String
+  fullName         String
+  phone            String?
+  avatarUrl        String?
+  role             RoleType        @default(STAFF)
+  isActive         Boolean         @default(true)
+  lastLoginAt      DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  auditLogs        AuditLog[]
+  paymentsCollected Payment[]      @relation("Collector")
+  notifications    Notification[]
+
+  @@index([email])
+  @@index([username])
+  @@index([role])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  module      String
+  description String?
+  createdAt   DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// Academic Structure
+// -------------------------------------------------------------
+
+model AcademicYear {
+  id                 String    @id @default(uuid())
+  name               String    @unique // e.g. "2026-27"
+  startDate          DateTime
+  endDate            DateTime
+  isActive           Boolean   @default(false)
+  isArchived         Boolean   @default(false)
+  admissionStatus    String    @default("OPEN") // "OPEN", "CLOSING_SOON", "CLOSED", "UPCOMING"
+  admissionStartDate DateTime?
+  admissionEndDate   DateTime?
+  admissionPrefix    String?   @default("ADM") // e.g. "ADM-2026", "ADM-2027"
+  targetEnrollment   Int       @default(300)
+  description        String?   @db.Text
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  studentsAcademic StudentAcademicRecord[]
+  feeStructures    FeeStructure[]
+  studentFees      StudentFee[]
+  payments         Payment[]
+
+  @@index([isActive])
+  @@index([admissionStatus])
+}
+
+model Class {
+  id           String   @id @default(uuid())
+  name         String   @unique // e.g. "Class 1", "Class 10"
+  orderNumber  Int      @default(0)
+  description  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sections      Section[]
+  academicRecords StudentAcademicRecord[]
+  feeStructures FeeStructure[]
+}
+
+model Section {
+  id          String   @id @default(uuid())
+  name        String   // "A", "B", "C"
+  classId     String
+  capacity    Int      @default(40)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  class            Class                   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  academicRecords  StudentAcademicRecord[]
+
+  @@unique([classId, name])
+  @@index([classId])
+}
+
+// -------------------------------------------------------------
+// Student & Parent Profile
+// -------------------------------------------------------------
+
+model Student {
+  id              String        @id @default(uuid())
+  admissionNumber String        @unique // e.g. "ADM-2026-001"
+  firstName       String
+  middleName      String?
+  lastName        String
+  dateOfBirth     DateTime
+  gender          Gender
+  bloodGroup      String?
+  aadhaarNumber   String?       @unique
+  nationality     String        @default("Indian")
+  religion        String?
+  category        String?
+  address         String?       @db.Text
+  city            String?
+  state           String?
+  pincode         String?
+  emergencyPhone  String?
+  photoUrl        String?
+  status          StudentStatus @default(ACTIVE)
+  admissionDate   DateTime      @default(now())
+  previousSchool  String?
+  previousClass   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  parents         StudentParent[]
+  documents       StudentDocument[]
+  academicRecords StudentAcademicRecord[]
+  studentFees     StudentFee[]
+  payments        Payment[]
+  receipts        Receipt[]
+
+  @@index([admissionNumber])
+  @@index([firstName, lastName])
+  @@index([status])
+  @@index([admissionDate])
+}
+
+model Parent {
+  id           String   @id @default(uuid())
+  fatherName   String?
+  motherName   String?
+  guardianName String?
+  primaryPhone String   @unique
+  alternatePhone String?
+  email        String?
+  occupation   String?
+  annualIncome String?
+  address      String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  students     StudentParent[]
+
+  @@index([primaryPhone])
+  @@index([email])
+}
+
+model StudentParent {
+  id           String   @id @default(uuid())
+  studentId    String
+  parentId     String
+  relationship String   @default("Parent")
+  isPrimary    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent       Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, parentId])
+  @@index([studentId])
+  @@index([parentId])
+}
+
+model StudentDocument {
+  id           String   @id @default(uuid())
+  studentId    String
+  documentType String   // "BIRTH_CERTIFICATE", "AADHAAR", "TRANSFER_CERTIFICATE", "PREVIOUS_MARKSHEET", "PHOTO", "OTHER"
+  title        String
+  fileUrl      String
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  uploadedAt   DateTime @default(now())
+
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+model StudentAcademicRecord {
+  id             String   @id @default(uuid())
+  studentId      String
+  academicYearId String
+  classId        String
+  sectionId      String?
+  rollNumber     String?
+  promoted       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  class          Class        @relation(fields: [classId], references: [id])
+  section        Section?     @relation(fields: [sectionId], references: [id])
+
+  @@unique([studentId, academicYearId])
+  @@index([academicYearId])
+  @@index([classId])
+  @@index([sectionId])
+}
+
+// -------------------------------------------------------------
+// Fee Management
+// -------------------------------------------------------------
+
+model FeeType {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  code        String       @unique
+  frequency   FeeFrequency @default(MONTHLY)
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  structureItems FeeStructureItem[]
+  studentFees    StudentFee[]
+}
+
+model FeeStructure {
+  id             String   @id @default(uuid())
+  academicYearId String
+  classId        String
+  title          String
+  totalAmount    Decimal  @db.Decimal(10, 2)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  academicYear AcademicYear       @relation(fields: [academicYearId], references: [id])
+  class        Class              @relation(fields: [classId], references: [id])
+  items        FeeStructureItem[]
+
+  @@unique([academicYearId, classId])
+  @@index([academicYearId])
+  @@index([classId])
+}
+
+model FeeStructureItem {
+  id             String       @id @default(uuid())
+  feeStructureId String
+  feeTypeId      String
+  amount         Decimal      @db.Decimal(10, 2)
+  dueMonth       Int?
+  frequency      FeeFrequency @default(MONTHLY)
+  createdAt      DateTime     @default(now())
+
+  feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  feeType      FeeType      @relation(fields: [feeTypeId], references: [id])
+
+  @@index([feeStructureId])
+  @@index([feeTypeId])
+}
+
+model StudentFee {
+  id             String    @id @default(uuid())
+  studentId      String
+  academicYearId String
+  feeTypeId      String
+  month          Int?
+  year           Int
+  title          String
+  amount         Decimal   @db.Decimal(10, 2)
+  discountAmount Decimal   @default(0.00) @db.Decimal(10, 2)
+  fineAmount     Decimal   @default(0.00) @db.Decimal(10, 2)
+  netAmount      Decimal   @db.Decimal(10, 2)
+  paidAmount     Decimal   @default(0.00) @db.Decimal(10, 2)
+  remainingAmount Decimal  @db.Decimal(10, 2)
+  dueDate        DateTime
+  status         FeeStatus @default(PENDING)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId], references: [id])
+  feeType      FeeType       @relation(fields: [feeTypeId], references: [id])
+  paymentItems PaymentItem[]
+
+  @@unique([studentId, academicYearId, feeTypeId, month, year])
+  @@index([studentId])
+  @@index([academicYearId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+// -------------------------------------------------------------
+// Payments & Receipts
+// -------------------------------------------------------------
+
+model Payment {
+  id             String        @id @default(uuid())
+  studentId      String
+  academicYearId String
+  collectedById  String?
+  amount         Decimal       @db.Decimal(10, 2)
+  paymentMethod  PaymentMethod @default(CASH)
+  paymentStatus  PaymentStatus @default(SUCCESS)
+  transactionRef String?
+  notes          String?
+  paidAt         DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  student      Student              @relation(fields: [studentId], references: [id])
+  academicYear AcademicYear         @relation(fields: [academicYearId], references: [id])
+  collectedBy  User?                @relation("Collector", fields: [collectedById], references: [id])
+  items        PaymentItem[]
+  receipt      Receipt?
+  onlineTx     PaymentTransaction?
+
+  @@index([studentId])
+  @@index([academicYearId])
+  @@index([paymentStatus])
+  @@index([paidAt])
+}
+
+model PaymentItem {
+  id           String   @id @default(uuid())
+  paymentId    String
+  studentFeeId String
+  amountPaid   Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+
+  payment    Payment    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id])
+
+  @@index([paymentId])
+  @@index([studentFeeId])
+}
+
+model PaymentTransaction {
+  id                String        @id @default(uuid())
+  paymentId         String?       @unique
+  orderId           String        @unique
+  razorpayPaymentId String?       @unique
+  signature         String?
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          String        @default("INR")
+  status            PaymentStatus @default(PENDING)
+  studentId         String
+  payload           String?       @db.Text
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([orderId])
+  @@index([razorpayPaymentId])
+}
+
+model Receipt {
+  id             String   @id @default(uuid())
+  receiptNumber  String   @unique
+  paymentId      String   @unique
+  studentId      String
+  totalAmount    Decimal  @db.Decimal(10, 2)
+  previousBalance Decimal @default(0.00) @db.Decimal(10, 2)
+  paidAmount     Decimal  @db.Decimal(10, 2)
+  remainingBalance Decimal @default(0.00) @db.Decimal(10, 2)
+  pdfPath        String?
+  generatedAt    DateTime @default(now())
+
+  payment   Payment    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  student   Student    @relation(fields: [studentId], references: [id])
+  emailLogs EmailLog[]
+
+  @@index([receiptNumber])
+  @@index([studentId])
+  @@index([generatedAt])
+}
+
+// -------------------------------------------------------------
+// Logs, Notifications & Settings
+// -------------------------------------------------------------
+
+model EmailLog {
+  id           String   @id @default(uuid())
+  receiptId    String?
+  recipient    String
+  subject      String
+  status       String
+  errorMessage String?  @db.Text
+  sentAt       DateTime @default(now())
+
+  receipt Receipt? @relation(fields: [receiptId], references: [id])
+
+  @@index([receiptId])
+  @@index([sentAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String?
+  title     String
+  message   String   @db.Text
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false)
+  linkUrl   String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  userName  String?
+  action    String
+  module    String
+  recordId  String?
+  oldData   String?  @db.Text
+  newData   String?  @db.Text
+  ipAddress String?
+  timestamp DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([module])
+  @@index([action])
+  @@index([timestamp])
+}
+
+model SchoolSettings {
+  id                 String   @id @default("default")
+  schoolName         String   @default("Pragya Bharti Public School")
+  tagline            String?  @default("Knowledge, Character & Excellence (PBPS)")
+  logoUrl            String?
+  address            String?  @default("Knowledge Park, Campus Road")
+  phone              String?  @default("+91 98765 43210")
+  email              String?  @default("admissions@pbps.edu.in")
+  website            String?  @default("https://pbps.edu.in")
+  registrationNumber String?  @default("SCH-REG-2024-9981")
+  principalName      String?  @default("Dr. V. K. Sharma, Principal")
+  receiptFooter      String?  @default("This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).")
+  authorizedSignatory String? @default("Accounts Officer, PBPS")
+  currencySymbol     String   @default("₹")
+  updatedAt          DateTime @updatedAt
+}

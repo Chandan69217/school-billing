@@ -1,0 +1,8 @@
+{
+  "name": "EduManage Pro - School Student Admission & Fee Management System",
+  "description": "Official school management ERP for Pragya Bharti Public School (PBPS) covering student admissions, fee collections, receipts, and administration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
