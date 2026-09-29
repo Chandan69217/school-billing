@@ -1,32 +1,134 @@
-# EduManage Pro - School Student Admission & Fee Management System
+# Pragya Bharti Public School (PBPS) - School Admission & Fee Management System
 
 A production-grade, full-stack School Admission and Fee Management System built with **React.js**, **Node.js + Express.js + TypeScript**, **Prisma ORM**, and **MySQL 8 (MariaDB)**.
 
 ---
 
-## 1. System Technology Stack
+## 1. Localhost Setup Guide (Step-by-Step)
 
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, Lucide React, Recharts, Axios, Sonner, Canvas Confetti.
-- **Backend**: Node.js, Express.js, TypeScript, Prisma ORM 5.22.0.
-- **Database**: MySQL 8 / MariaDB 10.11 (Native relational schema with foreign keys, transactions, and composite indexes).
-- **Authentication**: JWT access tokens (24h) + refresh tokens (7d), bcrypt password hashing.
-- **PDF Generation**: Backend PDFKit vector rendering for signed A4 receipts.
-- **Email Dispatch**: Nodemailer with SMTP delivery and database audit logging.
-- **Online Payments**: Razorpay integration with server-side HMAC-SHA256 cryptographic signature verification.
+Follow these steps to run the application on your local development machine (Windows, macOS, or Linux).
+
+### Step 1: Prerequisites
+Make sure you have installed on your computer:
+- **Node.js** (v18.x or v20+ recommended) & `npm`: [https://nodejs.org](https://nodejs.org)
+- **MySQL Server 8.0+** OR **MariaDB 10.5+** (or via XAMPP / WampServer / Docker)
 
 ---
 
-## 2. Default Demo User Accounts
+### Step 2: Set Up MySQL Database & User
+Open your MySQL terminal (or phpMyAdmin / MySQL Workbench) as root:
+
+```bash
+mysql -u root -p
+```
+
+Run the following SQL commands to create the database and user:
+
+```sql
+-- 1. Create the database
+CREATE DATABASE IF NOT EXISTS school_management CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 2. Create the dedicated database user
+CREATE USER IF NOT EXISTS 'school_user'@'localhost' IDENTIFIED BY 'SchoolPass123!';
+
+-- 3. Grant full permissions to the user on the database
+GRANT ALL PRIVILEGES ON school_management.* TO 'school_user'@'localhost';
+
+-- 4. Apply changes
+FLUSH PRIVILEGES;
+
+-- 5. Exit MySQL
+EXIT;
+```
+
+> **Note**: If using MySQL 8 on Windows or default XAMPP root without password, you can alternatively use your existing MySQL credentials (e.g. `mysql://root:yourpassword@localhost:3306/school_management` or `mysql://root:@localhost:3306/school_management`).
+
+---
+
+### Step 3: Configure Environment Variables (`.env`)
+In the root directory of your project, create a file named `.env` (or copy from `.env.example`):
+
+```bash
+cp .env.example .env
+```
+
+Ensure your `.env` contains:
+```env
+PORT=3000
+DATABASE_URL="mysql://school_user:SchoolPass123!@localhost:3306/school_management"
+
+JWT_SECRET="edumanage_jwt_secret_production_key_2026_xyz"
+JWT_REFRESH_SECRET="edumanage_refresh_secret_production_key_2026_abc"
+
+RAZORPAY_KEY_ID="rzp_test_school_edu_2026"
+RAZORPAY_KEY_SECRET="rzp_test_secret_edu_2026"
+
+SMTP_HOST="smtp.mailtrap.io"
+SMTP_PORT=2525
+SMTP_USER="smtp_user_example"
+SMTP_PASSWORD="smtp_password_example"
+SCHOOL_EMAIL="finance@pbps.edu.in"
+
+STORAGE_PATH="./uploads"
+VITE_API_URL="/api"
+```
+
+---
+
+### Step 4: Install Project Dependencies
+Run in your terminal from the project root:
+
+```bash
+npm install
+```
+
+---
+
+### Step 5: Push Database Schema to MySQL
+Prisma reads the schema from `prisma/schema.prisma` and automatically creates all 16 tables, foreign keys, and indexes in your MySQL database:
+
+```bash
+# Generate Prisma Client types
+npm run prisma:generate
+
+# Push schema directly to MySQL database (creates tables)
+npm run prisma:push
+```
+
+---
+
+### Step 6: Seed Database with Initial Data
+Run the database seed script to populate academic sessions (`2026-27`), all classes (Nursery to 12th) & sections (A, B, C), fee structures, sample students, and default user accounts:
+
+```bash
+npm run prisma:seed
+```
+
+---
+
+### Step 7: Start the Full-Stack Application
+Start the integrated backend Express API + Vite frontend dev server:
+
+```bash
+npm run dev
+```
+
+Open your browser and navigate to:
+**`http://localhost:3000`**
+
+---
+
+## 2. Default Login Accounts (PBPS)
 
 | Role | Username / Email | Password | Assigned Permissions |
 | :--- | :--- | :--- | :--- |
-| **Super Admin** | `superadmin` / `admin@greenwoodhigh.edu` | `Admin@123` | Full administrative, financial, staff, and system settings access |
-| **Principal** | `principal` / `principal@greenwoodhigh.edu` | `Admin@123` | Academic approvals, student directory, fee overviews, audit reports |
-| **Accountant** | `accountant` / `accountant@greenwoodhigh.edu` | `Admin@123` | Fee collections, receipt generation, PDF downloads, financial ledgers |
-| **Admission Staff** | `admission_staff` / `admission@greenwoodhigh.edu` | `Staff@123` | Multi-step student enrollments, document verification, class assignments |
-| **Staff Member** | `staff_user` / `staff@greenwoodhigh.edu` | `Staff@123` | Student directory & general academic view |
+| **Super Admin** | `superadmin` / `admin@pbps.edu.in` | `Admin@123` | Full administrative, financial, staff, and system settings access |
+| **Principal** | `principal` / `principal@pbps.edu.in` | `Admin@123` | Academic approvals, student directory, fee overviews, audit reports |
+| **Accountant** | `accountant` / `accountant@pbps.edu.in` | `Admin@123` | Fee collections, receipt generation, PDF downloads, financial ledgers |
+| **Admission Staff** | `admission_staff` / `admission@pbps.edu.in` | `Staff@123` | Multi-step student enrollments, document verification, class assignments |
+| **Staff Member** | `staff_user` / `staff@pbps.edu.in` | `Staff@123` | Student directory & general academic view |
 
-*Note: The login page includes 1-click test buttons for each role to immediately test role-based access control (RBAC).*
+*Tip: The login page includes 1-click test buttons for each role to immediately test role-based access control.*
 
 ---
 
