@@ -35,24 +35,24 @@ export const SchoolLogo: React.FC<SchoolLogoProps> = ({
         <defs>
           {/* Background Radial Gradient */}
           <radialGradient id="slBgGrad" cx="50%" cy="40%" r="65%">
-            <stop offset="0%" stop-color="#1e1b4b" />
-            <stop offset="65%" stop-color="#0f172a" />
-            <stop offset="100%" stop-color="#020617" />
+            <stop offset="0%" stopColor="#1e1b4b" />
+            <stop offset="65%" stopColor="#0f172a" />
+            <stop offset="100%" stopColor="#020617" />
           </radialGradient>
 
           {/* Premium Gold Gradient */}
           <linearGradient id="slGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#fef08a" />
-            <stop offset="30%" stop-color="#f59e0b" />
-            <stop offset="70%" stop-color="#d97706" />
-            <stop offset="100%" stop-color="#b45309" />
+            <stop offset="0%" stopColor="#fef08a" />
+            <stop offset="30%" stopColor="#f59e0b" />
+            <stop offset="70%" stopColor="#d97706" />
+            <stop offset="100%" stopColor="#b45309" />
           </linearGradient>
 
           {/* Sun & Light Gradient */}
           <linearGradient id="slSunGrad" x1="0%" y1="100%" x2="0%" y2="0%">
-            <stop offset="0%" stop-color="#ea580c" />
-            <stop offset="50%" stop-color="#f59e0b" />
-            <stop offset="100%" stop-color="#fef08a" />
+            <stop offset="0%" stopColor="#ea580c" />
+            <stop offset="50%" stopColor="#f59e0b" />
+            <stop offset="100%" stopColor="#fef08a" />
           </linearGradient>
         </defs>
 
