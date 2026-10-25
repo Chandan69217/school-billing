@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { getSchoolLogoBuffer } from '../config/logo.js';
 
 export interface AdmissionPdfData {
   school: {
@@ -83,18 +84,31 @@ export function generateAdmissionPdf(data: AdmissionPdfData): Promise<Buffer> {
       // Golden Header Accent Bar
       doc.rect(24, 107, 547, 3).fillColor('#d97706').fill();
 
-      // School Name & Affiliation
+      // Embed Official School Logo if available
+      const logoBuffer = getSchoolLogoBuffer();
+      if (logoBuffer) {
+        try {
+          doc.image(logoBuffer, 32, 30, { width: 50, height: 50, fit: [50, 50] });
+        } catch {
+          // Gracefully continue
+        }
+      }
+
+      // School Name & Affiliation (positioned to right of logo)
+      const textX = logoBuffer ? 88 : 35;
+      const textW = logoBuffer ? 475 : 525;
+
       doc.fillColor('#ffffff').fontSize(16).font('Helvetica-Bold')
-        .text(data.school.name.toUpperCase(), 35, 34, { align: 'center', width: 525 });
+        .text(data.school.name.toUpperCase(), textX, 32, { align: 'center', width: textW });
 
       if (data.school.tagline) {
         doc.fillColor('#fde68a').fontSize(8.5).font('Helvetica-Oblique')
-          .text(data.school.tagline, 35, 54, { align: 'center', width: 525 });
+          .text(data.school.tagline, textX, 52, { align: 'center', width: textW });
       }
 
       const regText = data.school.registrationNumber ? `Affiliation / Reg: ${data.school.registrationNumber} | ` : '';
       doc.fillColor('#cbd5e1').fontSize(8).font('Helvetica')
-        .text(`${regText}${data.school.address} | Phone: ${data.school.phone} | Email: ${data.school.email}`, 35, 68, { align: 'center', width: 525 });
+        .text(`${regText}${data.school.address} | Phone: ${data.school.phone} | Email: ${data.school.email}`, textX, 66, { align: 'center', width: textW });
 
       // Admission Document Title Banner
       doc.rect(35, 85, 525, 20).fillColor(isCancelled ? '#991b1b' : '#0f172a').fill();

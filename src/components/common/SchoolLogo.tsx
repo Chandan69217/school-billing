@@ -1,183 +1,98 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { DEFAULT_SCHOOL_LOGO, getSchoolLogo, SCHOOL_NAME, SCHOOL_SHORT_NAME } from '../../config/logo.js';
 
-interface SchoolLogoProps {
+export interface SchoolLogoProps {
   className?: string;
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
-  variant?: 'crest' | 'shield' | 'icon';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  logoUrl?: string | null;
+  alt?: string;
   showLabel?: boolean;
+  withContainer?: boolean;
+  containerClassName?: string;
 }
 
 export const SchoolLogo: React.FC<SchoolLogoProps> = ({
-  className = 'h-10 w-10',
-  size,
-  variant = 'crest',
+  className = '',
+  size = 'md',
+  logoUrl,
+  alt = `${SCHOOL_NAME} Emblem`,
   showLabel = false,
+  withContainer = false,
+  containerClassName = ''
 }) => {
-  const sizeClasses = size
-    ? {
-        xs: 'h-6 w-6',
-        sm: 'h-8 w-8',
-        md: 'h-10 w-10',
-        lg: 'h-14 w-14',
-        xl: 'h-20 w-20',
-      }[size]
-    : className;
+  const [hasError, setHasError] = useState(false);
 
-  return (
-    <div className={`inline-flex items-center gap-2.5 ${showLabel ? '' : 'shrink-0'}`}>
-      <svg
-        viewBox="0 0 200 200"
-        className={`${sizeClasses} shrink-0 select-none drop-shadow-sm`}
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-label="Pragya Bharti Public School (PBPS) Logo"
-      >
-        <defs>
-          {/* Background Radial Gradient */}
-          <radialGradient id="slBgGrad" cx="50%" cy="40%" r="65%">
-            <stop offset="0%" stopColor="#1e1b4b" />
-            <stop offset="65%" stopColor="#0f172a" />
-            <stop offset="100%" stopColor="#020617" />
-          </radialGradient>
+  const resolvedSrc = getSchoolLogo(logoUrl);
 
-          {/* Premium Gold Gradient */}
-          <linearGradient id="slGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#fef08a" />
-            <stop offset="30%" stopColor="#f59e0b" />
-            <stop offset="70%" stopColor="#d97706" />
-            <stop offset="100%" stopColor="#b45309" />
-          </linearGradient>
+  const sizeDimensions = {
+    xs: 'h-6 w-6',
+    sm: 'h-8 w-8',
+    md: 'h-10 w-10',
+    lg: 'h-14 w-14',
+    xl: 'h-20 w-20',
+    '2xl': 'h-28 w-28'
+  }[size];
 
-          {/* Sun & Light Gradient */}
-          <linearGradient id="slSunGrad" x1="0%" y1="100%" x2="0%" y2="0%">
-            <stop offset="0%" stopColor="#ea580c" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="100%" stopColor="#fef08a" />
-          </linearGradient>
-        </defs>
+  const finalImgClass = className || sizeDimensions;
 
-        {/* Outer Circular Medallion */}
-        <circle cx="100" cy="100" r="95" fill="url(#slBgGrad)" stroke="url(#slGoldGrad)" strokeWidth="4.5" />
-        <circle cx="100" cy="100" r="88" fill="none" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="3.5,3.5" opacity="0.8" />
-        <circle cx="100" cy="100" r="82" fill="none" stroke="url(#slGoldGrad)" strokeWidth="2" />
+  const logoElement = hasError ? (
+    <div
+      className={`${finalImgClass} rounded-full bg-linear-to-br from-indigo-700 via-indigo-900 to-slate-950 text-amber-300 font-extrabold flex items-center justify-center border border-amber-400/40 shadow-xs text-xs select-none`}
+      title={SCHOOL_NAME}
+    >
+      {SCHOOL_SHORT_NAME}
+    </div>
+  ) : (
+    <img
+      src={resolvedSrc}
+      alt={alt}
+      onError={() => setHasError(true)}
+      className={`${finalImgClass} object-contain shrink-0 select-none transition-transform hover:scale-105 duration-200`}
+      style={{
+        imageRendering: '-webkit-optimize-contrast',
+        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.12))'
+      }}
+      loading="eager"
+    />
+  );
 
-        {/* Circular School Name Top Arc */}
-        <path id="slTopTextArc" d="M 28 100 A 72 72 0 0 1 172 100" fill="none" />
-        <text
-          fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-          fontSize="10"
-          fontWeight="800"
-          fill="#fef08a"
-          letterSpacing="2.2"
+  if (withContainer) {
+    return (
+      <div className={`inline-flex items-center gap-2.5 ${showLabel ? '' : 'shrink-0'}`}>
+        <div
+          className={`p-1.5 rounded-2xl bg-white/95 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center justify-center backdrop-blur-xs ${containerClassName}`}
         >
-          <textPath href="#slTopTextArc" startOffset="50%" textAnchor="middle">
-            PRAGYA BHARTI PUBLIC SCHOOL
-          </textPath>
-        </text>
+          {logoElement}
+        </div>
+        {showLabel && (
+          <div className="flex flex-col">
+            <span className="font-extrabold text-xs sm:text-sm tracking-tight text-slate-900 dark:text-white leading-tight">
+              {SCHOOL_NAME}
+            </span>
+            <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 tracking-wider uppercase">
+              Darkness to Light
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
-        {/* Inner Shield Ring */}
-        <circle cx="100" cy="108" r="54" fill="#0f172a" stroke="url(#slGoldGrad)" strokeWidth="2.5" />
-
-        {/* Rays of Wisdom / Pragya */}
-        <g opacity="0.85">
-          <line x1="100" y1="92" x2="100" y2="62" stroke="url(#slSunGrad)" strokeWidth="2.5" strokeLinecap="round" />
-          <line x1="84" y1="94" x2="71" y2="69" stroke="url(#slSunGrad)" strokeWidth="2.2" strokeLinecap="round" />
-          <line x1="116" y1="94" x2="129" y2="69" stroke="url(#slSunGrad)" strokeWidth="2.2" strokeLinecap="round" />
-          <line x1="71" y1="101" x2="52" y2="83" stroke="url(#slSunGrad)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="129" y1="101" x2="148" y2="83" stroke="url(#slSunGrad)" strokeWidth="2" strokeLinecap="round" />
-        </g>
-
-        {/* Radiant Sun of Enlightenment */}
-        <circle cx="100" cy="104" r="17" fill="url(#slSunGrad)" />
-
-        {/* Open Academic Book */}
-        <g transform="translate(0, 15)">
-          <path
-            d="M 100 95 C 90 92, 74 91, 62 95 C 60 96, 59 98, 59 101 L 59 122 C 73 118, 89 119, 100 124 C 111 119, 127 118, 141 122 L 141 101 C 141 98, 140 96, 138 95 C 126 91, 110 92, 100 95 Z"
-            fill="#f8fafc"
-            stroke="#334155"
-            strokeWidth="1.2"
-          />
-          <path d="M 100 98 C 91 95, 77 94, 63 98 L 63 119 C 75 116, 89 116, 100 121 Z" fill="#f1f5f9" />
-          <line x1="68" y1="104" x2="94" y2="101" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="68" y1="109" x2="94" y2="106" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="68" y1="114" x2="92" y2="111" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-
-          <path d="M 100 98 C 109 95, 123 94, 137 98 L 137 119 C 125 116, 111 116, 100 121 Z" fill="#e2e8f0" />
-          <line x1="106" y1="101" x2="132" y2="104" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="106" y1="106" x2="132" y2="109" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="108" y1="111" x2="132" y2="114" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
-
-          <line x1="100" y1="95" x2="100" y2="124" stroke="#d97706" strokeWidth="2.5" />
-          <path d="M 100 124 L 98 131 L 100 129 L 102 131 Z" fill="#d97706" />
-        </g>
-
-        {/* Laurel Wreath */}
-        <g fill="url(#slGoldGrad)">
-          <ellipse cx="44" cy="98" rx="4.5" ry="2.2" transform="rotate(-35 44 98)" />
-          <ellipse cx="40" cy="110" rx="4.8" ry="2.3" transform="rotate(-15 40 110)" />
-          <ellipse cx="41" cy="122" rx="4.8" ry="2.3" transform="rotate(10 41 122)" />
-          <ellipse cx="47" cy="134" rx="4.8" ry="2.3" transform="rotate(35 47 134)" />
-
-          <ellipse cx="156" cy="98" rx="4.5" ry="2.2" transform="rotate(35 156 98)" />
-          <ellipse cx="160" cy="110" rx="4.8" ry="2.3" transform="rotate(15 160 110)" />
-          <ellipse cx="159" cy="122" rx="4.8" ry="2.3" transform="rotate(-10 159 122)" />
-          <ellipse cx="153" cy="134" rx="4.8" ry="2.3" transform="rotate(-35 153 134)" />
-        </g>
-
-        {/* Ribbon with PBPS */}
-        <g>
-          <path d="M 36 166 L 50 150 L 50 172 Z" fill="#92400e" />
-          <path d="M 30 166 L 46 150 L 46 172 Z" fill="#b45309" />
-          <path d="M 164 166 L 150 150 L 150 172 Z" fill="#92400e" />
-          <path d="M 170 166 L 154 150 L 154 172 Z" fill="#b45309" />
-
-          <path
-            d="M 44 154 Q 100 146 156 154 L 152 176 Q 100 168 48 176 Z"
-            fill="url(#slGoldGrad)"
-            stroke="#78350f"
-            strokeWidth="1.2"
-          />
-
-          <text
-            x="100"
-            y="170"
-            fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-            fontSize="16"
-            fontWeight="900"
-            fill="#0f172a"
-            textAnchor="middle"
-            letterSpacing="3.5"
-          >
-            PBPS
-          </text>
-        </g>
-
-        {/* Bottom Arc Stars & Subtitle */}
-        <path id="slBottomTextArc" d="M 60 186 A 78 78 0 0 0 140 186" fill="none" />
-        <text
-          fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-          fontSize="7.5"
-          fontWeight="700"
-          fill="#fef08a"
-          letterSpacing="2"
-        >
-          <textPath href="#slBottomTextArc" startOffset="50%" textAnchor="middle">
-            ★ ESTD · EXCELLENCE ★
-          </textPath>
-        </text>
-      </svg>
-
-      {showLabel && (
-        <div className="min-w-0">
-          <span className="text-base font-bold tracking-tight text-slate-900 block leading-tight truncate">
-            PBPS
+  if (showLabel) {
+    return (
+      <div className="inline-flex items-center gap-2.5 shrink-0">
+        {logoElement}
+        <div className="flex flex-col">
+          <span className="font-extrabold text-xs sm:text-sm tracking-tight text-slate-900 dark:text-white leading-tight">
+            {SCHOOL_NAME}
           </span>
-          <span className="text-[11px] font-medium text-slate-500 block truncate">
-            Pragya Bharti Public School
+          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 tracking-wider uppercase">
+            Darkness to Light
           </span>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
+
+  return logoElement;
 };

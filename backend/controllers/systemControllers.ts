@@ -5,6 +5,8 @@ import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { isDatabaseConfigured } from '../config/index.js';
 import { ALL_PERMISSIONS_CATALOG, DEFAULT_ROLE_PERMISSIONS, FALLBACK_USERS } from '../utils/fallbackData.js';
+import { clearLogoCache } from '../config/logo.js';
+import { verifyImageMagicBytes, saveLogoBuffer } from '../middleware/upload.js';
 
 const prisma = new PrismaClient();
 
@@ -12,13 +14,13 @@ const DEFAULT_SETTINGS = {
   id: 'default',
   schoolName: 'Pragya Bharti Public School',
   tagline: 'Knowledge, Character & Excellence (PBPS)',
-  logoUrl: '/school-logo.svg',
-  address: 'Campus Road, PBPS Campus',
-  phone: '+91 98765 43210',
-  email: 'admissions@pbps.edu.in',
-  website: 'https://pbps.edu.in',
+  logoUrl: '/assets/images/school-logo.png',
+  address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+  phone: '+91 9430442800, +91 7247271212, or 0631-2215243',
+  email: 'pragyabhartigayabih@gmail.com',
+  website: 'www.pragyabhartipschool.com',
   registrationNumber: 'SCH-REG-2024-9981',
-  principalName: 'Dr. V. K. Sharma, Principal',
+  principalName: 'N/A',
   receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
   authorizedSignatory: 'Accounts Officer, PBPS',
   currencySymbol: '₹',
@@ -149,7 +151,7 @@ export const getStaffList = async (req: Request, res: Response): Promise<void> =
   if (!isDatabaseConfigured()) {
     res.json({
       success: true,
-      data: FALLBACK_USERS.map(u => ({ ...u, phone: '+91 98111 22334', _count: { paymentsCollected: 5 } }))
+      data: FALLBACK_USERS.map(u => ({ ...u, phone: ' +91 9430442800, +91 7247271212, or 0631-2215243', _count: { paymentsCollected: 5 } }))
     });
     return;
   }
@@ -386,7 +388,112 @@ export const updateSettings = async (req: AuthenticatedRequest, res: Response): 
       ipAddress: req.ip
     });
 
+    clearLogoCache();
     res.json({ success: true, message: 'School settings updated successfully', data: settings });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Upload new school logo (PNG/JPG only, max 500 KB)
+ * Validates real magic bytes and saves to public/uploads/logo/
+ */
+export const uploadSchoolLogo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ success: false, message: 'No image file uploaded.' });
+      return;
+    }
+
+    if (file.size > 500 * 1024) {
+      res.status(400).json({
+        success: false,
+        message: `Logo file must be less than 500 KB (selected: ${(file.size / 1024).toFixed(1)} KB).`
+      });
+      return;
+    }
+
+    // Verify magic bytes
+    const check = verifyImageMagicBytes(file.buffer);
+    if (!check.isValid) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid image format. Only real PNG and JPG files are accepted.'
+      });
+      return;
+    }
+
+    const logoUrl = saveLogoBuffer(file.buffer, check.extension);
+
+    // Update School Settings
+    await prisma.schoolSettings.upsert({
+      where: { id: 'default' },
+      update: { logoUrl },
+      create: {
+        id: 'default',
+        schoolName: 'Pragya Bharti Public School',
+        logoUrl
+      }
+    });
+
+    clearLogoCache();
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'UPLOAD_SCHOOL_LOGO',
+      module: 'SETTINGS',
+      recordId: 'default',
+      newData: { logoUrl },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'School logo uploaded successfully.',
+      data: { logoUrl }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Reset school logo to the default official PNG emblem
+ */
+export const resetSchoolLogo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const defaultLogo = '/assets/images/school-logo.png';
+
+    await prisma.schoolSettings.upsert({
+      where: { id: 'default' },
+      update: { logoUrl: defaultLogo },
+      create: {
+        id: 'default',
+        schoolName: 'Pragya Bharti Public School',
+        logoUrl: defaultLogo
+      }
+    });
+
+    clearLogoCache();
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'RESET_SCHOOL_LOGO',
+      module: 'SETTINGS',
+      recordId: 'default',
+      newData: { logoUrl: defaultLogo },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'School logo reset to official default emblem.',
+      data: { logoUrl: defaultLogo }
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

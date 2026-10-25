@@ -22,7 +22,7 @@ const FALLBACK_FEE_TYPES = [
 
 const getFallbackStructures = () => {
   return FALLBACK_CLASSES.map(cls => {
-    const rates = FALLBACK_FEE_RATES[cls.name] || { tuition: 1500, computer: 0, prospectus: 700, admission: 2000, termFee: 1350 };
+    const rates = FALLBACK_FEE_RATES[cls.name] || { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 };
     const items: any[] = [
       { id: `item-${cls.id}-1`, feeHead: 'TUITION_FEE', feeType: { name: 'Tuition Fee', code: 'TUIT' }, amount: rates.tuition, frequency: 'MONTHLY', componentName: 'Tuition Fee' },
       ...(rates.computer > 0 ? [{ id: `item-${cls.id}-2`, feeHead: 'COMPUTER_FEE', feeType: { name: 'Computer Fee', code: 'COMP' }, amount: rates.computer, frequency: 'MONTHLY', componentName: 'Computer Fee' }] : []),

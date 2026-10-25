@@ -12,11 +12,16 @@ import {
   RotateCcw,
   Sliders,
   DollarSign,
-  FileText
+  FileText,
+  Image as ImageIcon,
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext.js';
+import { SchoolLogo } from '../components/common/SchoolLogo.js';
+import { DEFAULT_SCHOOL_LOGO } from '../config/logo.js';
 
 export const SettingsPage: React.FC = () => {
   const { user, hasPermission } = useAuth();
@@ -47,6 +52,56 @@ export const SettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [resettingLogo, setResettingLogo] = useState(false);
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 500 * 1024) {
+      toast.error(`Logo file must be less than 500 KB (selected: ${(file.size / 1024).toFixed(1)} KB)`);
+      return;
+    }
+
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Only PNG, JPG, and JPEG images are allowed');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append('logo', file);
+      const res = await apiClient.post('/settings/upload-logo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data?.success) {
+        toast.success('School logo updated successfully');
+        setSettings((prev: any) => ({ ...prev, logoUrl: res.data.data.logoUrl }));
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to upload logo');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleResetLogo = async () => {
+    setResettingLogo(true);
+    try {
+      const res = await apiClient.post('/settings/reset-logo');
+      if (res.data?.success) {
+        toast.success('School logo reset to official default emblem');
+        setSettings((prev: any) => ({ ...prev, logoUrl: res.data.data.logoUrl }));
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to reset logo');
+    } finally {
+      setResettingLogo(false);
+    }
+  };
 
   // Audit logs state
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
@@ -231,6 +286,86 @@ export const SettingsPage: React.FC = () => {
           )}
 
           <form onSubmit={handleSave} className="space-y-6">
+            {/* School Logo & Brand Emblem Management (Part A1) */}
+            <div className="p-4 sm:p-5 rounded-2xl border border-indigo-100 bg-linear-to-br from-indigo-50/50 via-white to-slate-50 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-100">
+                <div className="flex items-center gap-2">
+                  <ImageIcon className="h-5 w-5 text-indigo-600 shrink-0" />
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900">Official School Logo & Emblem</h2>
+                    <p className="text-[11px] text-slate-500">
+                      Single source of truth used across receipts, certificates, reports, PDFs, Excel exports, and UI.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-2xs transition-colors cursor-pointer">
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>{uploadingLogo ? 'Uploading...' : 'Upload New Logo'}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".png,.jpg,.jpeg"
+                      disabled={uploadingLogo || resettingLogo}
+                      onChange={handleLogoUpload}
+                    />
+                  </label>
+
+                  {settings.logoUrl && settings.logoUrl !== DEFAULT_SCHOOL_LOGO && settings.logoUrl !== '/school-logo.svg' && (
+                    <button
+                      type="button"
+                      disabled={uploadingLogo || resettingLogo}
+                      onClick={handleResetLogo}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors"
+                      title="Reset to default official PBPS emblem"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                      <span>{resettingLogo ? 'Resetting...' : 'Reset to Default'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                {/* Logo Preview against Light Theme */}
+                <div className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+                  <div className="h-16 w-16 p-1 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center shrink-0">
+                    <SchoolLogo size="lg" logoUrl={settings.logoUrl} className="h-14 w-14 object-contain" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block tracking-wider">Light Theme Preview</span>
+                    <span className="text-xs font-bold text-slate-900 truncate block">Pragya Bharti Public School</span>
+                    <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                      {settings.logoUrl && settings.logoUrl !== DEFAULT_SCHOOL_LOGO && settings.logoUrl !== '/school-logo.svg'
+                        ? 'Custom Logo Active'
+                        : 'Official Emblem (Default)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Logo Preview against Dark Background */}
+                <div className="flex items-center gap-3 p-3 rounded-xl border border-slate-800 bg-slate-950 shadow-2xs text-white">
+                  <div className="h-16 w-16 p-1 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center shrink-0">
+                    <SchoolLogo size="lg" logoUrl={settings.logoUrl} className="h-14 w-14 object-contain" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block tracking-wider">Dark Theme Preview</span>
+                    <span className="text-xs font-bold text-white truncate block">Pragya Bharti Public School</span>
+                    <span className="text-[10px] font-bold text-amber-400 tracking-wider">Darkness to Light</span>
+                  </div>
+                </div>
+
+                {/* Specifications Notice */}
+                <div className="text-[11px] text-slate-500 space-y-1 bg-white/70 p-3 rounded-xl border border-slate-200/80">
+                  <div className="font-bold text-slate-700">Logo Upload Specifications:</div>
+                  <div>• Accepted formats: <strong>PNG, JPG, JPEG</strong></div>
+                  <div>• Maximum file size: <strong>500 KB</strong> (enforced client & server)</div>
+                  <div>• Transparency: Supported for crisp vector-like display</div>
+                </div>
+              </div>
+            </div>
+
             {/* General Profile */}
             <div className="space-y-4">
               <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">

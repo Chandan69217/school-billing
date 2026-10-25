@@ -47,42 +47,7 @@ export const ALL_PERMISSIONS_CATALOG = [
 ];
 
 export const FALLBACK_USERS: FallbackUser[] = [
-  {
-    id: 'user-director-1',
-    email: 'admin@greenwoodhigh.edu',
-    username: 'superadmin',
-    fullName: 'Vikramaditya Rathore (Director)',
-    role: 'SUPER_ADMIN',
-    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
-    isActive: true,
-  },
-  {
-    id: 'user-principal-2',
-    email: 'principal@greenwoodhigh.edu',
-    username: 'principal',
-    fullName: 'Dr. Sunita Sharma (Principal)',
-    role: 'PRINCIPAL',
-    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
-    isActive: true,
-  },
-  {
-    id: 'user-accountant-3',
-    email: 'accountant@greenwoodhigh.edu',
-    username: 'accountant',
-    fullName: 'Rajesh K. Mehta (Accountant)',
-    role: 'ACCOUNTANT',
-    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
-    isActive: true,
-  },
-  {
-    id: 'user-admission-4',
-    email: 'admission@greenwoodhigh.edu',
-    username: 'admission_staff',
-    fullName: 'Pooja Verma (Admission Staff)',
-    role: 'ADMISSION_STAFF',
-    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
-    isActive: true,
-  }
+
 ];
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -130,19 +95,19 @@ export const FALLBACK_CLASSES = [
 ];
 
 export const FALLBACK_FEE_RATES: Record<string, { tuition: number; computer: number; prospectus: number; admission: number; termFee: number }> = {
-  'Nursery':   { tuition: 1190, computer: 0,   prospectus: 700, admission: 0,    termFee: 1350 },
-  'LKG':       { tuition: 1290, computer: 0,   prospectus: 700, admission: 2000, termFee: 1350 },
-  'UKG':       { tuition: 1290, computer: 0,   prospectus: 700, admission: 2000, termFee: 1350 },
-  'Class I':   { tuition: 1390, computer: 0,   prospectus: 700, admission: 2000, termFee: 1350 },
-  'Class II':  { tuition: 1390, computer: 0,   prospectus: 700, admission: 2000, termFee: 1350 },
-  'Class III': { tuition: 1490, computer: 125, prospectus: 700, admission: 3000, termFee: 1350 },
-  'Class IV':  { tuition: 1490, computer: 125, prospectus: 700, admission: 3000, termFee: 1350 },
-  'Class V':   { tuition: 1725, computer: 125, prospectus: 700, admission: 3000, termFee: 1350 },
-  'Class VI':  { tuition: 1725, computer: 125, prospectus: 700, admission: 3000, termFee: 1350 },
-  'Class VII': { tuition: 1890, computer: 125, prospectus: 700, admission: 5000, termFee: 1350 },
-  'Class VIII':{ tuition: 1925, computer: 125, prospectus: 700, admission: 5000, termFee: 1350 },
-  'Class IX':  { tuition: 2390, computer: 125, prospectus: 700, admission: 5000, termFee: 1350 },
-  'Class X':   { tuition: 2490, computer: 125, prospectus: 0,   admission: 0,    termFee: 1350 },
-  'Class XI':  { tuition: 0,    computer: 0,   prospectus: 1000,admission: 0,    termFee: 1350 },
-  'Class XII': { tuition: 0,    computer: 0,   prospectus: 0,   admission: 0,    termFee: 1350 },
+  'Nursery':   { tuition: 0, computer: 0,   prospectus: 0, admission: 0,    termFee: 0 },
+  'LKG':       { tuition: 0, computer: 0,   prospectus: 0, admission: 0, termFee: 0 },
+  'UKG':       { tuition: 0, computer: 0,   prospectus: 0, admission: 0, termFee: 0 },
+  'Class I':   { tuition: 0, computer: 0,   prospectus: 0, admission: 0, termFee: 0 },
+  'Class II':  { tuition: 0, computer: 0,   prospectus: 0, admission: 0, termFee: 0 },
+  'Class III': { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class IV':  { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class V':   { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class VI':  { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class VII': { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class VIII':{ tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class IX':  { tuition: 0, computer: 0, prospectus: 0, admission: 0, termFee: 0 },
+  'Class X':   { tuition: 0, computer: 0, prospectus: 0,   admission: 0,    termFee: 0 },
+  'Class XI':  { tuition: 0,    computer: 0,   prospectus: 1000,admission: 0,    termFee: 0 },
+  'Class XII': { tuition: 0,    computer: 0,   prospectus: 0,   admission: 0,    termFee: 0 },
 };

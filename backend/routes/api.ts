@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticateJwt, requirePermission } from '../middleware/auth.js';
-import { documentUpload, photoUpload } from '../middleware/upload.js';
+import { documentUpload, photoUpload, logoUpload } from '../middleware/upload.js';
 import * as authCtrl from '../controllers/authController.js';
 import * as dashCtrl from '../controllers/dashboardController.js';
 import * as acadCtrl from '../controllers/academicController.js';
@@ -135,6 +135,8 @@ router.get('/reports/discounts', authenticateJwt, requirePermission('report.view
 router.get('/reports/user-wise', authenticateJwt, requirePermission('report.view'), repCtrl.getUserWiseCollectionReport);
 router.get('/reports/student-ledger/:studentId', authenticateJwt, requirePermission('report.view'), repCtrl.getStudentLedger);
 router.get('/reports/cancelled-payments', authenticateJwt, requirePermission('report.view'), repCtrl.getCancelledPaymentsReport);
+router.get('/reports/:type/pdf', authenticateJwt, requirePermission('report.view'), repCtrl.exportReportPdf);
+router.get('/reports/:type/excel', authenticateJwt, requirePermission('report.view'), repCtrl.exportReportExcel);
 
 // =============================================================
 // Staff, Settings, Backup & Audit
@@ -146,6 +148,8 @@ router.put('/staff/:id/reset-password', authenticateJwt, requirePermission('user
 
 router.get('/settings', authenticateJwt, sysCtrl.getSettings);
 router.put('/settings', authenticateJwt, requirePermission('settings.manage'), sysCtrl.updateSettings);
+router.post('/settings/upload-logo', authenticateJwt, requirePermission('settings.manage'), logoUpload.single('logo'), sysCtrl.uploadSchoolLogo);
+router.post('/settings/reset-logo', authenticateJwt, requirePermission('settings.manage'), sysCtrl.resetSchoolLogo);
 
 router.get('/backup/export', authenticateJwt, requirePermission('backup.manage'), sysCtrl.exportBackup);
 router.post('/backup/restore', authenticateJwt, requirePermission('backup.manage'), sysCtrl.restoreBackup);

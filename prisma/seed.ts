@@ -109,7 +109,7 @@ async function main() {
       id: 'default',
       schoolName: 'Pragya Bharti Public School',
       tagline: 'Knowledge, Character & Excellence (PBPS)',
-      logoUrl: '/school-logo.svg',
+      logoUrl: '/assets/images/school-logo.png',
       address: 'Knowledge Park, Campus Road',
       phone: '+91 98765 43210',
       email: 'admissions@pbps.edu.in',

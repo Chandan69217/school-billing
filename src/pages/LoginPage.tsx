@@ -52,11 +52,11 @@ export const LoginPage: React.FC = () => {
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         <div className="flex justify-center">
-          <div className="relative">
-            <SchoolLogo className="h-16 w-16 drop-shadow-xl" />
+          <div className="relative p-2.5 rounded-3xl bg-white/95 border border-white/40 shadow-2xl backdrop-blur-md">
+            <SchoolLogo size="xl" className="h-20 w-20 drop-shadow-lg" />
           </div>
         </div>
-        <h2 className="mt-3 sm:mt-4 text-center text-xl sm:text-2xl font-black tracking-tight text-white">
+        <h2 className="mt-4 text-center text-xl sm:text-2xl font-black tracking-tight text-white">
           Pragya Bharti Public School
         </h2>
         <p className="mt-1 text-center text-xs text-slate-400 font-medium">

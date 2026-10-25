@@ -988,7 +988,8 @@ export const getSlcPdf = async (req: Request, res: Response): Promise<void> => {
     });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${slc.certificateNumber}.pdf"`);
+    const safeAdmNo = slc.admissionNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.setHeader('Content-Disposition', `inline; filename="SLC_${safeAdmNo}.pdf"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

@@ -97,3 +97,39 @@ export function savePhotoBuffer(buffer: Buffer, originalExt: string): string {
   fs.writeFileSync(filePath, buffer);
   return `/uploads/photos/${filename}`;
 }
+
+// School Logo Upload Storage (Max 500 KB, JPG/PNG only)
+const logoDir = path.resolve(config.storagePath, 'logo');
+if (!fs.existsSync(logoDir)) {
+  fs.mkdirSync(logoDir, { recursive: true });
+}
+
+export const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 500 * 1024 // 500 KB strict limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = ['.jpg', '.jpeg', '.png'];
+
+    if (allowedMimes.includes(file.mimetype.toLowerCase()) && allowedExts.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid logo format. Only PNG, JPG, and JPEG files up to 500 KB are allowed.'));
+    }
+  }
+});
+
+export function saveLogoBuffer(buffer: Buffer, originalExt: string): string {
+  if (!fs.existsSync(logoDir)) {
+    fs.mkdirSync(logoDir, { recursive: true });
+  }
+  const cleanExt = originalExt.startsWith('.') ? originalExt : `.${originalExt}`;
+  const filename = `school_logo_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${cleanExt}`;
+  const filePath = path.join(logoDir, filename);
+  fs.writeFileSync(filePath, buffer);
+  return `/uploads/logo/${filename}`;
+}
+

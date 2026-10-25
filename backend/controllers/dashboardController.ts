@@ -15,96 +15,46 @@ const getFallbackStats = () => ({
   },
   charts: {
     monthlyTrend: [
-      { month: 'Apr', amount: 580000 },
-      { month: 'May', amount: 920000 },
-      { month: 'Jun', amount: 410000 },
-      { month: 'Jul', amount: 490000 },
-      { month: 'Aug', amount: 530000 },
-      { month: 'Sep', amount: 510000 },
-      { month: 'Oct', amount: 890000 },
-      { month: 'Nov', amount: 460000 },
-      { month: 'Dec', amount: 430000 },
-      { month: 'Jan', amount: 470000 },
-      { month: 'Feb', amount: 520000 },
-      { month: 'Mar', amount: 640000 },
+      { month: 'Apr', amount: 0 },
+      { month: 'May', amount: 0 },
+      { month: 'Jun', amount: 0 },
+      { month: 'Jul', amount: 0 },
+      { month: 'Aug', amount: 0 },
+      { month: 'Sep', amount: 0 },
+      { month: 'Oct', amount: 0 },
+      { month: 'Nov', amount: 0 },
+      { month: 'Dec', amount: 0 },
+      { month: 'Jan', amount: 0 },
+      { month: 'Feb', amount: 0 },
+      { month: 'Mar', amount: 0 },
     ],
     classWiseCollection: [
-      { className: 'Nursery', totalAmount: 180000, paidAmount: 165000, remainingAmount: 15000 },
-      { className: 'LKG', totalAmount: 210000, paidAmount: 195000, remainingAmount: 15000 },
-      { className: 'UKG', totalAmount: 220000, paidAmount: 200000, remainingAmount: 20000 },
-      { className: 'Class I', totalAmount: 250000, paidAmount: 230000, remainingAmount: 20000 },
-      { className: 'Class II', totalAmount: 260000, paidAmount: 240000, remainingAmount: 20000 },
-      { className: 'Class III', totalAmount: 290000, paidAmount: 265000, remainingAmount: 25000 },
-      { className: 'Class IV', totalAmount: 310000, paidAmount: 280000, remainingAmount: 30000 },
-      { className: 'Class V', totalAmount: 340000, paidAmount: 305000, remainingAmount: 35000 },
-      { className: 'Class VI', totalAmount: 350000, paidAmount: 315000, remainingAmount: 35000 },
-      { className: 'Class VII', totalAmount: 380000, paidAmount: 340000, remainingAmount: 40000 },
-      { className: 'Class VIII', totalAmount: 410000, paidAmount: 370000, remainingAmount: 40000 },
-      { className: 'Class IX', totalAmount: 460000, paidAmount: 410000, remainingAmount: 50000 },
-      { className: 'Class X', totalAmount: 480000, paidAmount: 430000, remainingAmount: 50000 },
+      { className: 'Nursery', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'LKG', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'UKG', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class I', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class II', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class III', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class IV', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class V', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class VI', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class VII', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class VIII', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class IX', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
+      { className: 'Class X', totalAmount: 0, paidAmount: 0, remainingAmount: 0 },
     ],
     paymentMethods: [
-      { name: 'CASH', value: 1420000, count: 620 },
-      { name: 'UPI', value: 980000, count: 410 },
-      { name: 'BANK_TRANSFER', value: 290000, count: 85 },
-      { name: 'CHEQUE', value: 155000, count: 42 }
+      { name: 'CASH', value: 0, count: 0 },
+      { name: 'UPI', value: 0, count: 0 },
+      { name: 'BANK_TRANSFER', value: 0, count: 0 },
+      { name: 'CHEQUE', value: 0, count: 0 }
     ]
   },
   recentPayments: [
-    {
-      id: 'pay-1',
-      receiptId: 'rec-1',
-      receiptNumber: 'PBPS-2026-0042',
-      studentId: 'stud-1',
-      studentName: 'Aarav Sharma',
-      admissionNumber: 'PBPS-2026-001',
-      className: 'Class IV',
-      sectionName: 'A',
-      amount: 2965,
-      paymentMethod: 'UPI',
-      paidAt: new Date().toISOString(),
-      status: 'SUCCESS',
-      collectedBy: 'Rajesh K. Mehta'
-    },
-    {
-      id: 'pay-2',
-      receiptId: 'rec-2',
-      receiptNumber: 'PBPS-2026-0041',
-      studentId: 'stud-2',
-      studentName: 'Ananya Verma',
-      admissionNumber: 'PBPS-2026-002',
-      className: 'Class II',
-      sectionName: 'A',
-      amount: 4090,
-      paymentMethod: 'CASH',
-      paidAt: new Date(Date.now() - 3600000).toISOString(),
-      status: 'SUCCESS',
-      collectedBy: 'Pooja Verma'
-    }
+    
   ],
   recentAdmissions: [
-    {
-      id: 'adm-1',
-      admissionNumber: 'PBPS-2026-001',
-      studentName: 'Aarav Sharma',
-      className: 'Class IV',
-      sectionName: 'A',
-      parentName: 'Vikram Sharma',
-      parentPhone: '+91 98111 22334',
-      admissionDate: new Date().toISOString(),
-      status: 'ACTIVE'
-    },
-    {
-      id: 'adm-2',
-      admissionNumber: 'PBPS-2026-002',
-      studentName: 'Ananya Verma',
-      className: 'Class II',
-      sectionName: 'A',
-      parentName: 'Ramesh Verma',
-      parentPhone: '+91 98222 33445',
-      admissionDate: new Date().toISOString(),
-      status: 'ACTIVE'
-    }
+   
   ]
 });
 

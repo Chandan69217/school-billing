@@ -159,10 +159,10 @@ export const getReceiptById = async (req: Request, res: Response): Promise<void>
     const school = await prisma.schoolSettings.findFirst() || {
       schoolName: 'Pragya Bharti Public School',
       tagline: 'Knowledge, Character & Excellence (PBPS)',
-      logoUrl: '/school-logo.svg',
-      address: 'Knowledge Park, Institutional Area',
-      phone: '+91 98765 43210',
-      email: 'admissions@pbps.edu.in',
+      logoUrl: '/assets/images/school-logo.png',
+      address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+      phone: '+91 9430442800, +91 7247271212, or 0631-2215243',
+      email: 'pragyabhartigayabih@gmail.com',
       registrationNumber: 'SCH-REG-2024-9981',
       receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
       authorizedSignatory: 'Accounts Officer, PBPS'
@@ -339,9 +339,10 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
     const school = await prisma.schoolSettings.findFirst() || {
       schoolName: 'Pragya Bharti Public School',
       tagline: 'Knowledge, Character & Excellence (PBPS)',
-      address: 'Knowledge Park, Institutional Area',
-      phone: '+91 98765 43210',
-      email: 'admissions@pbps.edu.in',
+      logoUrl: '/assets/images/school-logo.png',
+      address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+      phone: '+91 9430442800, +91 7247271212, or 0631-2215243',
+      email: 'pragyabhartigayabih@gmail.com',
       registrationNumber: 'SCH-REG-2024-9981',
       receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
       authorizedSignatory: 'Accounts Officer, PBPS'
@@ -357,6 +358,7 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
     }));
 
     const isDuplicate = receipt.isDuplicate || receipt.reprintCount > 0 || isReprint;
+    const format = (req.query.format === 'a5' || req.query.format === 'A5') ? 'A5' : 'A4';
 
     const pdfBuffer = await generateReceiptPdf({
       school: {
@@ -369,7 +371,9 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
         receiptFooter: school.receiptFooter || undefined,
         authorizedSignatory: school.authorizedSignatory || undefined
       },
-      receiptNumber: receipt.receiptNumber + (isDuplicate ? ' (DUPLICATE COPY)' : ''),
+      receiptNumber: receipt.receiptNumber,
+      isDuplicate,
+      format,
       paymentDate: new Date(receipt.payment.paidAt).toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',
@@ -395,8 +399,12 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
       collectedBy: receipt.payment.collectedBy?.fullName || 'Counter Staff'
     });
 
+    const safeStudentName = `${receipt.student.firstName}_${receipt.student.lastName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeReceiptNo = receipt.receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `Receipt_${safeReceiptNo}_${safeStudentName}${isDuplicate ? '_DUPLICATE' : ''}.pdf`;
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${receipt.receiptNumber}${isDuplicate ? '_DUPLICATE' : ''}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     console.error('getReceiptPdf error:', error);

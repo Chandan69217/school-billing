@@ -22,6 +22,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
   const [receipt, setReceipt] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receiptFormat, setReceiptFormat] = useState<'a4' | 'a5'>('a4');
 
   // Email form
   const [showEmailInput, setShowEmailInput] = useState(false);
@@ -110,14 +111,31 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               {receipt && (
                 <>
+                  <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setReceiptFormat('a4')}
+                      className={`px-2 py-1 rounded transition-colors ${receiptFormat === 'a4' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      A4 Full
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReceiptFormat('a5')}
+                      className={`px-2 py-1 rounded transition-colors ${receiptFormat === 'a5' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      A5 Half
+                    </button>
+                  </div>
+
                   <a
-                    href={`/api/receipts/${receipt.id}/pdf`}
+                    href={`/api/receipts/${receipt.id}/pdf?format=${receiptFormat}`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs min-h-[42px] sm:min-h-[36px]"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Download PDF</span>
+                    <span>Download PDF ({receiptFormat.toUpperCase()})</span>
                   </a>
 
                   <button
