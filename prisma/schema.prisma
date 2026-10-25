@@ -1,10 +1,11 @@
-datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
-}
-
 generator client {
   provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum RoleType {
@@ -97,6 +98,17 @@ model Permission {
   createdAt   DateTime @default(now())
 }
 
+model RolePermission {
+  id             String    @id @default(uuid())
+  role           RoleType
+  permissionCode String
+  createdAt      DateTime  @default(now())
+
+  @@unique([role, permissionCode])
+  @@index([role])
+  @@index([permissionCode])
+}
+
 // -------------------------------------------------------------
 // Academic Structure
 // -------------------------------------------------------------
@@ -108,6 +120,9 @@ model AcademicYear {
   endDate            DateTime
   isActive           Boolean   @default(false)
   isArchived         Boolean   @default(false)
+  archivedAt         DateTime?
+  archivedById       String?
+  archivedByName     String?
   admissionStatus    String    @default("OPEN") // "OPEN", "CLOSING_SOON", "CLOSED", "UPCOMING"
   admissionStartDate DateTime?
   admissionEndDate   DateTime?
@@ -175,24 +190,47 @@ model Student {
   city            String?
   state           String?
   pincode         String?
-  emergencyPhone     String?
-  photoUrl           String?
-  status             StudentStatus @default(ACTIVE)
-  cancellationReason String?       @db.Text
-  cancelledAt        DateTime?
-  cancellationNotes  String?       @db.Text
-  admissionDate      DateTime      @default(now())
-  previousSchool     String?
-  previousClass   String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  sameAsResidence     Boolean   @default(true)
+  presentAddress      String?   @db.Text
+  presentCity         String?
+  presentState        String?
+  presentPincode      String?
+  fatherAadhaarNumber String?
+  motherAadhaarNumber String?
+  emergencyPhone      String?
+  photoUrl            String?
+  status              StudentStatus @default(ACTIVE)
+  cancellationReason  String?       @db.Text
+  cancelledAt         DateTime?
+  cancellationNotes   String?       @db.Text
+  withdrawalDate      DateTime?
+  withdrawalReason    String?       @db.Text
+  admissionDate       DateTime      @default(now())
+  isPreviouslyEnrolled Boolean      @default(false)
+  previousSchoolName  String?
+  previousClassPassed String?
+  previousMedium      String?
+  previousLeavingDate DateTime?
+  previousTcNumber    String?
+  previousTcDate      DateTime?
+  previousSchool      String?
+  previousClass       String?
+  isHostelStudent     Boolean       @default(false)
+  hostelRoomNumber    String?
+  hostelAdmissionDate DateTime?
+  isNonAttending      Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
-  parents         StudentParent[]
-  documents       StudentDocument[]
-  academicRecords StudentAcademicRecord[]
-  studentFees     StudentFee[]
-  payments        Payment[]
-  receipts        Receipt[]
+  parents            StudentParent[]
+  documents          StudentDocument[]
+  academicRecords    StudentAcademicRecord[]
+  studentFees        StudentFee[]
+  payments           Payment[]
+  receipts           Receipt[]
+  feeWaivers         FeeWaiver[]
+  leavingCertificate SchoolLeavingCertificate?
+  statusHistory      StudentStatusHistory[]
 
   @@index([admissionNumber])
   @@index([firstName, lastName])
@@ -201,18 +239,20 @@ model Student {
 }
 
 model Parent {
-  id           String   @id @default(uuid())
-  fatherName   String?
-  motherName   String?
-  guardianName String?
-  primaryPhone String   @unique
-  alternatePhone String?
-  email        String?
-  occupation   String?
-  annualIncome String?
-  address      String?  @db.Text
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  fatherName          String?
+  fatherAadhaarNumber String?
+  motherName          String?
+  motherAadhaarNumber String?
+  guardianName        String?
+  primaryPhone        String   @unique
+  alternatePhone      String?
+  email               String?
+  occupation          String?
+  annualIncome        String?
+  address             String?  @db.Text
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   students     StudentParent[]
 
@@ -317,7 +357,12 @@ model FeeStructureItem {
   feeTypeId      String
   amount         Decimal      @db.Decimal(10, 2)
   dueMonth       Int?
+  dueMonths      String?      // Comma-separated months like "5,10" for Term Fee
   frequency      FeeFrequency @default(MONTHLY)
+  appliesTo      String       @default("ALL") // "ALL", "NEW_ADMISSION_ONLY", "HOSTEL_ONLY"
+  effectiveDate  DateTime     @default(now())
+  isActive       Boolean      @default(true)
+  componentName  String?      // e.g. "Tuition Fee", "Computer Fee" (breakdown component)
   createdAt      DateTime     @default(now())
 
   feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
@@ -350,6 +395,7 @@ model StudentFee {
   academicYear AcademicYear  @relation(fields: [academicYearId], references: [id])
   feeType      FeeType       @relation(fields: [feeTypeId], references: [id])
   paymentItems PaymentItem[]
+  feeWaivers   FeeWaiver[]
 
   @@unique([studentId, academicYearId, feeTypeId, month, year])
   @@index([studentId])
@@ -363,18 +409,22 @@ model StudentFee {
 // -------------------------------------------------------------
 
 model Payment {
-  id             String        @id @default(uuid())
-  studentId      String
-  academicYearId String
-  collectedById  String?
-  amount         Decimal       @db.Decimal(10, 2)
-  paymentMethod  PaymentMethod @default(CASH)
-  paymentStatus  PaymentStatus @default(SUCCESS)
-  transactionRef String?
-  notes          String?
-  paidAt         DateTime      @default(now())
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                 String        @id @default(uuid())
+  studentId          String
+  academicYearId     String
+  collectedById      String?
+  amount             Decimal       @db.Decimal(10, 2)
+  paymentMethod      PaymentMethod @default(CASH)
+  paymentStatus      PaymentStatus @default(SUCCESS)
+  transactionRef     String?
+  notes              String?
+  isCancelled        Boolean       @default(false)
+  cancellationReason String?
+  cancelledById      String?
+  cancelledAt        DateTime?
+  paidAt             DateTime      @default(now())
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   student      Student              @relation(fields: [studentId], references: [id])
   academicYear AcademicYear         @relation(fields: [academicYearId], references: [id])
@@ -387,6 +437,7 @@ model Payment {
   @@index([academicYearId])
   @@index([paymentStatus])
   @@index([paidAt])
+  @@index([isCancelled])
 }
 
 model PaymentItem {
@@ -424,16 +475,18 @@ model PaymentTransaction {
 }
 
 model Receipt {
-  id             String   @id @default(uuid())
-  receiptNumber  String   @unique
-  paymentId      String   @unique
-  studentId      String
-  totalAmount    Decimal  @db.Decimal(10, 2)
-  previousBalance Decimal @default(0.00) @db.Decimal(10, 2)
-  paidAmount     Decimal  @db.Decimal(10, 2)
-  remainingBalance Decimal @default(0.00) @db.Decimal(10, 2)
-  pdfPath        String?
-  generatedAt    DateTime @default(now())
+  id               String   @id @default(uuid())
+  receiptNumber    String   @unique
+  paymentId        String   @unique
+  studentId        String
+  totalAmount      Decimal  @db.Decimal(10, 2)
+  previousBalance   Decimal  @default(0.00) @db.Decimal(10, 2)
+  paidAmount       Decimal  @db.Decimal(10, 2)
+  remainingBalance Decimal  @default(0.00) @db.Decimal(10, 2)
+  reprintCount     Int      @default(0)
+  isDuplicate      Boolean  @default(false)
+  pdfPath          String?
+  generatedAt      DateTime @default(now())
 
   payment   Payment    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   student   Student    @relation(fields: [studentId], references: [id])
@@ -512,5 +565,140 @@ model SchoolSettings {
   receiptFooter      String?  @default("This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).")
   authorizedSignatory String? @default("Accounts Officer, PBPS")
   currencySymbol     String   @default("₹")
+  receiptPrefix      String   @default("PBPS")
+  lateFeeEnabled     Boolean  @default(false)
+  lateFeeType        String   @default("FIXED") // "FIXED", "PER_DAY"
+  lateFeeAmount      Decimal  @default(0.00) @db.Decimal(10, 2)
+  lateFeeGraceDays   Int      @default(10)
+  requireDiscountApproval Boolean @default(false)
+  requireCustomFeeApproval Boolean @default(true)
+  paymentModes       String   @default("Cash,UPI,Cheque,Bank Transfer,Card,Other")
   updatedAt          DateTime @updatedAt
 }
+
+model DiscountRule {
+  id                  String   @id @default(uuid())
+  name                String   // e.g. "Sibling Discount", "Staff Child", "Scholarship", "Custom"
+  type                String   // "PERCENTAGE", "FIXED"
+  value               Decimal  @db.Decimal(10, 2)
+  applicableFeeHeads  String?  // comma-separated fee head names or null for all
+  requiresApproval    Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  description         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model DiscountApplication {
+  id             String    @id @default(uuid())
+  studentId      String
+  discountRuleId String?
+  discountName   String
+  amount         Decimal   @db.Decimal(10, 2)
+  reason         String?
+  status         String    @default("APPROVED") // "PENDING_APPROVAL", "APPROVED", "REJECTED"
+  appliedById    String
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([studentId])
+  @@index([status])
+}
+
+model CustomFeeRequest {
+  id             String    @id @default(uuid())
+  studentId      String?
+  academicYearId String
+  classId        String
+  feeHeadName    String
+  amount         Decimal   @db.Decimal(10, 2)
+  reason         String
+  status         String    @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
+  requestedById  String
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([studentId])
+  @@index([status])
+}
+
+model FeeWaiver {
+  id           String      @id @default(uuid())
+  studentId    String
+  studentFeeId String?
+  feeHeadName  String
+  amount       Decimal     @db.Decimal(10, 2)
+  reason       String      @db.Text
+  waivedById   String
+  waivedByName String
+  approvedById String?
+  approvedByName String?
+  waivedAt     DateTime    @default(now())
+
+  student      Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentFee   StudentFee? @relation(fields: [studentFeeId], references: [id])
+
+  @@index([studentId])
+  @@index([studentFeeId])
+  @@index([waivedAt])
+}
+
+model SchoolLeavingCertificate {
+  id                String    @id @default(uuid())
+  certificateNumber String    @unique // e.g. "SLC/2026/0001"
+  studentId         String    @unique
+  academicYearId    String?
+  studentName       String
+  admissionNumber   String
+  photoUrl          String?
+  fatherName        String?
+  motherName        String?
+  dateOfBirth       DateTime
+  nationality       String?
+  category          String?
+  admissionDate     DateTime
+  leavingDate       DateTime
+  classAdmitted     String
+  classLastStudied  String
+  reasonForLeaving  String    @db.Text
+  feeDuesStatus     String    @default("All dues cleared/waived")
+  conduct           String    @default("Good")
+  remarks           String?   @db.Text
+  issueDate         DateTime  @default(now())
+  reprintCount      Int       @default(0)
+  lastReprintedAt   DateTime?
+  lastReprintedById String?
+  issuedById        String
+  issuedByName      String
+  pdfPath           String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  student           Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([certificateNumber])
+  @@index([studentId])
+  @@index([issueDate])
+}
+
+model StudentStatusHistory {
+  id            String         @id @default(uuid())
+  studentId     String
+  fromStatus    StudentStatus?
+  toStatus      StudentStatus
+  reason        String         @db.Text
+  effectiveDate DateTime       @default(now())
+  changedById   String
+  changedByName String
+  createdAt     DateTime       @default(now())
+
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([effectiveDate])
+}
+

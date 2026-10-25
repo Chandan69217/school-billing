@@ -3,10 +3,87 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-async function main() {
-  console.log('🌱 Starting database seeding for EduManage Pro...');
+export const ALL_PERMISSIONS = [
+  { code: 'student.view', name: 'View Students', module: 'Students', description: 'View student profiles, details and lists' },
+  { code: 'student.create', name: 'Register Student', module: 'Students', description: 'Register new students in admission and enrollment' },
+  { code: 'student.edit', name: 'Edit Student Details', module: 'Students', description: 'Modify student profile, parent details, hostel status' },
+  { code: 'student.delete', name: 'Deactivate / Mark Left', module: 'Students', description: 'Deactivate or mark student as withdrawn' },
+  { code: 'student.promote', name: 'Promote Students', module: 'Students', description: 'Perform year-end bulk student promotion' },
+  { code: 'admission.manage', name: 'Process Admissions', module: 'Admissions', description: 'Create and process new admissions' },
+  { code: 'admission.view', name: 'View Admissions', module: 'Admissions', description: 'View admission applications and details' },
+  { code: 'fee.collect', name: 'Collect Fees', module: 'Billing', description: 'Collect fees, part payments, multi-month payments' },
+  { code: 'fee.view', name: 'View Fee Information', module: 'Billing', description: 'View student fee accounts, history and dues' },
+  { code: 'fee.structure.manage', name: 'Manage Fee Structure', module: 'Fee Structure', description: 'Add, edit, deactivate class fee structures and heads' },
+  { code: 'discount.apply', name: 'Apply Discounts', module: 'Discounts', description: 'Apply sibling, staff, scholarship discounts' },
+  { code: 'discount.approve', name: 'Approve Discounts', module: 'Discounts', description: 'Approve or reject discount applications' },
+  { code: 'customfee.manage', name: 'Request Custom Fee', module: 'Fee Structure', description: 'Enter custom fee at director discretion' },
+  { code: 'customfee.approve', name: 'Approve Custom Fee', module: 'Fee Structure', description: 'Approve custom discretionary fees' },
+  { code: 'receipt.print', name: 'Print Receipts', module: 'Receipts', description: 'Print newly generated receipts' },
+  { code: 'receipt.reprint', name: 'Reprint Receipts (Duplicate)', module: 'Receipts', description: 'Reprint duplicate copies of past receipts' },
+  { code: 'payment.cancel', name: 'Cancel Payment', module: 'Billing', description: 'Cancel existing payments with mandatory reason' },
+  { code: 'payment.edit', name: 'Edit Payment', module: 'Billing', description: 'Edit notes or references of payment records' },
+  { code: 'due.view', name: 'View & Export Dues', module: 'Dues', description: 'View student-wise and class-wise dues and export' },
+  { code: 'report.view', name: 'View & Export Reports', module: 'Reports', description: 'Access daily, monthly, class-wise, fee-head collection reports' },
+  { code: 'user.manage', name: 'Manage Users & Staff', module: 'Administration', description: 'Create users, assign roles, reset passwords, deactivate' },
+  { code: 'roles.manage', name: 'Manage Permissions', module: 'Administration', description: 'Configure role-based dynamic permission matrix' },
+  { code: 'settings.manage', name: 'School Settings', module: 'Administration', description: 'Configure school profile, logo, late fees, receipt prefix' },
+  { code: 'backup.manage', name: 'Backup & Restore', module: 'Administration', description: 'Perform one-click database export and restore' },
+  { code: 'audit.view', name: 'View Audit Logs', module: 'Administration', description: 'Inspect audit trail of all changes' },
+  { code: 'session.archive', name: 'Archive / Unarchive Sessions', module: 'Administration', description: 'Archive past sessions and restore archived sessions' },
+  { code: 'session.export', name: 'Export Session Register', module: 'Administration', description: 'Export session enrollment lists and session summaries to Excel CSV' },
+  { code: 'student.status.change', name: 'Change Student Status', module: 'Students', description: 'Mark students as Active, Inactive, Withdrawn, or Cancelled' },
+  { code: 'fee.waive', name: 'Waive Fee Dues', module: 'Billing', description: 'Waive outstanding fee heads upon withdrawal/cancellation' },
+  { code: 'slc.generate', name: 'Generate SLC', module: 'Students', description: 'Issue official School Leaving Certificate on withdrawal/cancellation' },
+  { code: 'slc.reprint', name: 'Reprint SLC (Duplicate)', module: 'Students', description: 'Reprint duplicate copies of official School Leaving Certificate' },
+  { code: 'sensitive.view', name: 'View Sensitive Data', module: 'Administration', description: 'View unmasked Aadhaar numbers and sensitive particulars' },
+];
 
-  // 1. School Settings
+async function main() {
+  console.log('🌱 Starting database seeding for Pragya Bharti Public School (PBPS)...');
+
+  // 1. Seed Permissions Catalog
+  for (const perm of ALL_PERMISSIONS) {
+    await prisma.permission.upsert({
+      where: { code: perm.code },
+      update: { name: perm.name, module: perm.module, description: perm.description },
+      create: perm,
+    });
+  }
+  console.log('✅ Permissions catalog seeded');
+
+  // 2. Seed Default Dynamic Role Permissions
+  const defaultRolePermissions: Record<RoleType, string[]> = {
+    SUPER_ADMIN: ALL_PERMISSIONS.map(p => p.code),
+    PRINCIPAL: [
+      'student.view', 'admission.view', 'fee.view',
+      'discount.approve', 'customfee.approve', 'due.view', 'report.view',
+      'session.archive', 'session.export', 'student.status.change', 'fee.waive', 'slc.generate', 'slc.reprint', 'sensitive.view'
+    ],
+    ACCOUNTANT: [
+      'student.view', 'fee.collect', 'fee.view', 'receipt.print',
+      'receipt.reprint', 'discount.apply', 'due.view', 'report.view',
+      'session.export', 'fee.waive', 'slc.reprint'
+    ],
+    ADMISSION_STAFF: [
+      'student.create', 'student.edit', 'student.view', 'admission.manage',
+      'admission.view', 'fee.collect', 'fee.view', 'receipt.print', 'receipt.reprint', 'due.view',
+      'session.export', 'student.status.change', 'slc.generate', 'slc.reprint'
+    ],
+    STAFF: ['student.view', 'fee.view']
+  };
+
+  for (const [role, codes] of Object.entries(defaultRolePermissions)) {
+    for (const code of codes) {
+      await prisma.rolePermission.upsert({
+        where: { role_permissionCode: { role: role as RoleType, permissionCode: code } },
+        update: {},
+        create: { role: role as RoleType, permissionCode: code },
+      });
+    }
+  }
+  console.log('✅ Role permissions matrix initialized');
+
+  // 3. School Settings
   await prisma.schoolSettings.upsert({
     where: { id: 'default' },
     update: {
@@ -14,9 +91,19 @@ async function main() {
       tagline: 'Knowledge, Character & Excellence (PBPS)',
       email: 'admissions@pbps.edu.in',
       website: 'https://pbps.edu.in',
-      receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
+      registrationNumber: 'SCH-REG-2024-9981',
       principalName: 'Dr. V. K. Sharma, Principal',
+      receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
       authorizedSignatory: 'Accounts Officer, PBPS',
+      currencySymbol: '₹',
+      receiptPrefix: 'PBPS',
+      lateFeeEnabled: false, // Default DISABLED as per SRS
+      lateFeeType: 'FIXED',
+      lateFeeAmount: 0,
+      lateFeeGraceDays: 10,
+      requireDiscountApproval: false,
+      requireCustomFeeApproval: true,
+      paymentModes: 'Cash,UPI,Cheque,Bank Transfer,Card,Other'
     },
     create: {
       id: 'default',
@@ -32,86 +119,98 @@ async function main() {
       receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
       authorizedSignatory: 'Accounts Officer, PBPS',
       currencySymbol: '₹',
+      receiptPrefix: 'PBPS',
+      lateFeeEnabled: false,
+      lateFeeType: 'FIXED',
+      lateFeeAmount: 0,
+      lateFeeGraceDays: 10,
+      requireDiscountApproval: false,
+      requireCustomFeeApproval: true,
+      paymentModes: 'Cash,UPI,Cheque,Bank Transfer,Card,Other'
     },
   });
 
-  // 2. Users (Super Admin, Principal, Accountant, Admission Staff, Staff)
+  // 4. Default Users
   const defaultPassword = await bcrypt.hash('Admin@123', 10);
   const staffPassword = await bcrypt.hash('Staff@123', 10);
 
-  const superAdmin = await prisma.user.upsert({
+  // Director (SUPER_ADMIN)
+  await prisma.user.upsert({
     where: { email: 'admin@greenwoodhigh.edu' },
-    update: {},
+    update: { role: RoleType.SUPER_ADMIN },
     create: {
       email: 'admin@greenwoodhigh.edu',
       username: 'superadmin',
       passwordHash: defaultPassword,
-      fullName: 'Vikramaditya Rathore',
+      fullName: 'Vikramaditya Rathore (Director)',
       phone: '+91 98111 22233',
       role: RoleType.SUPER_ADMIN,
       isActive: true,
     },
   });
 
-  const principal = await prisma.user.upsert({
+  // Principal
+  await prisma.user.upsert({
     where: { email: 'principal@greenwoodhigh.edu' },
-    update: {},
+    update: { role: RoleType.PRINCIPAL },
     create: {
       email: 'principal@greenwoodhigh.edu',
       username: 'principal',
       passwordHash: defaultPassword,
-      fullName: 'Dr. Sunita Deshmukh',
+      fullName: 'Dr. Sunita Deshmukh (Principal)',
       phone: '+91 98222 33344',
       role: RoleType.PRINCIPAL,
       isActive: true,
     },
   });
 
-  const accountant = await prisma.user.upsert({
+  // Accountant
+  await prisma.user.upsert({
     where: { email: 'accountant@greenwoodhigh.edu' },
-    update: {},
+    update: { role: RoleType.ACCOUNTANT },
     create: {
       email: 'accountant@greenwoodhigh.edu',
       username: 'accountant',
       passwordHash: defaultPassword,
-      fullName: 'Rajesh K. Mehta',
+      fullName: 'Rajesh K. Mehta (Accountant)',
       phone: '+91 98333 44455',
       role: RoleType.ACCOUNTANT,
       isActive: true,
     },
   });
 
-  const admissionStaff = await prisma.user.upsert({
+  // Admission Staff
+  await prisma.user.upsert({
     where: { email: 'admission@greenwoodhigh.edu' },
-    update: {},
+    update: { role: RoleType.ADMISSION_STAFF },
     create: {
       email: 'admission@greenwoodhigh.edu',
       username: 'admission_staff',
       passwordHash: staffPassword,
-      fullName: 'Pooja Verma',
+      fullName: 'Pooja Verma (Admission Staff)',
       phone: '+91 98444 55566',
       role: RoleType.ADMISSION_STAFF,
       isActive: true,
     },
   });
 
-  const regularStaff = await prisma.user.upsert({
+  // Regular Staff
+  await prisma.user.upsert({
     where: { email: 'staff@greenwoodhigh.edu' },
-    update: {},
+    update: { role: RoleType.STAFF },
     create: {
       email: 'staff@greenwoodhigh.edu',
       username: 'staff_user',
       passwordHash: staffPassword,
-      fullName: 'Arun Kumar',
+      fullName: 'Arun Kumar (Teacher / Staff)',
       phone: '+91 98555 66677',
       role: RoleType.STAFF,
       isActive: true,
     },
   });
+  console.log('✅ Users seeded with Director, Principal, Accountant, Admission Staff');
 
-  console.log('✅ Users seeded: Super Admin, Principal, Accountant, Admission Staff, Staff');
-
-  // 3. Academic Year (Active 2026-27)
+  // 5. Academic Sessions (2026-27 active, 2025-26 previous)
   const academicYear = await prisma.academicYear.upsert({
     where: { name: '2026-27' },
     update: { isActive: true },
@@ -121,10 +220,11 @@ async function main() {
       endDate: new Date('2027-03-31T23:59:59.000Z'),
       isActive: true,
       isArchived: false,
+      admissionStatus: 'OPEN',
+      admissionPrefix: 'PBPS',
     },
   });
 
-  // Previous year for comparison
   await prisma.academicYear.upsert({
     where: { name: '2025-26' },
     update: { isActive: false },
@@ -134,287 +234,354 @@ async function main() {
       endDate: new Date('2026-03-31T23:59:59.000Z'),
       isActive: false,
       isArchived: true,
+      admissionStatus: 'CLOSED',
+      admissionPrefix: 'PBPS-25',
     },
   });
-
   console.log('✅ Academic Years seeded: 2026-27 (Active)');
 
-  // 4. Classes and Sections
-  const classNames = [
-    'Nursery', 'LKG', 'UKG',
-    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
-    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
-    'Class 11', 'Class 12'
+  // 6. Classes (exact SRS classes)
+  const classList = [
+    { name: 'Nursery', order: 1, desc: 'Pre-primary Nursery' },
+    { name: 'LKG', order: 2, desc: 'Lower Kindergarten' },
+    { name: 'UKG', order: 3, desc: 'Upper Kindergarten' },
+    { name: 'Class I', order: 4, desc: 'Class 1' },
+    { name: 'Class II', order: 5, desc: 'Class 2' },
+    { name: 'Class III', order: 6, desc: 'Class 3 (Includes Computer Fee)' },
+    { name: 'Class IV', order: 7, desc: 'Class 4 (Includes Computer Fee)' },
+    { name: 'Class V', order: 8, desc: 'Class 5 (Includes Computer Fee)' },
+    { name: 'Class VI', order: 9, desc: 'Class 6 (Includes Computer Fee)' },
+    { name: 'Class VII', order: 10, desc: 'Class 7 (Includes Computer Fee)' },
+    { name: 'Class VIII', order: 11, desc: 'Class 8 (Includes Computer Fee)' },
+    { name: 'Class IX', order: 12, desc: 'Class 9 (Includes Computer Fee)' },
+    { name: 'Class X', order: 13, desc: 'Class 10 (Includes Computer Fee)' },
+    { name: 'Class XI', order: 14, desc: 'Senior Secondary - Non-attending' },
+    { name: 'Class XII', order: 15, desc: 'Senior Secondary - Non-attending' },
   ];
 
-  const sectionNames = ['A', 'B', 'C'];
   const createdClasses: Record<string, any> = {};
-  const createdSections: Record<string, any[]> = {};
-
-  for (let i = 0; i < classNames.length; i++) {
-    const cName = classNames[i];
+  for (const c of classList) {
     const cls = await prisma.class.upsert({
-      where: { name: cName },
-      update: { orderNumber: i + 1 },
-      create: {
-        name: cName,
-        orderNumber: i + 1,
-        description: `Primary and secondary education section for ${cName}`,
-      },
+      where: { name: c.name },
+      update: { orderNumber: c.order, description: c.desc },
+      create: { name: c.name, orderNumber: c.order, description: c.desc },
     });
-    createdClasses[cName] = cls;
-    createdSections[cName] = [];
+    createdClasses[c.name] = cls;
 
-    for (const sName of sectionNames) {
-      const section = await prisma.section.upsert({
-        where: {
-          classId_name: {
-            classId: cls.id,
-            name: sName,
-          },
-        },
+    // Sections A, B, C
+    for (const sec of ['A', 'B', 'C']) {
+      await prisma.section.upsert({
+        where: { classId_name: { classId: cls.id, name: sec } },
         update: {},
-        create: {
-          name: sName,
-          classId: cls.id,
-          capacity: 40,
-        },
+        create: { name: sec, classId: cls.id, capacity: 40 },
       });
-      createdSections[cName].push(section);
     }
   }
+  console.log('✅ All SRS Classes & Sections created');
 
-  console.log('✅ Classes (Nursery - 12) & Sections (A, B, C) seeded');
-
-  // 5. Fee Types
-  const feeTypesData = [
-    { name: 'Tuition Fee', code: 'TUIT', frequency: FeeFrequency.MONTHLY, description: 'Monthly academic instruction fee' },
-    { name: 'Admission Fee', code: 'ADM', frequency: FeeFrequency.ONE_TIME, description: 'One-time admission processing fee' },
-    { name: 'Annual Development Fee', code: 'ANN', frequency: FeeFrequency.ANNUAL, description: 'Annual campus and sports development charges' },
-    { name: 'Exam Fee', code: 'EXAM', frequency: FeeFrequency.ANNUAL, description: 'Semester and board exam administration fee' },
-    { name: 'Computer & Smart Class Fee', code: 'COMP', frequency: FeeFrequency.MONTHLY, description: 'Lab computing and digital learning resources' },
-    { name: 'Library Fee', code: 'LIB', frequency: FeeFrequency.ANNUAL, description: 'Library and digital archives access fee' },
-    { name: 'Sports & Activities Fee', code: 'SPORT', frequency: FeeFrequency.ANNUAL, description: 'Athletics, fitness and co-curriculars' },
-    { name: 'Transport Fee', code: 'TRANS', frequency: FeeFrequency.MONTHLY, description: 'School bus service fee' },
+  // 7. Fee Types (Configurable heads)
+  const feeTypes = [
+    { name: 'Tuition Fee', code: 'TUIT', frequency: FeeFrequency.MONTHLY, description: 'Monthly tuition component' },
+    { name: 'Computer Fee', code: 'COMP', frequency: FeeFrequency.MONTHLY, description: 'Computer lab fee (Rs.125 for Class III to X)' },
+    { name: 'Prospectus Fee', code: 'PROS', frequency: FeeFrequency.ONE_TIME, description: 'One-time admission form / prospectus fee' },
+    { name: 'Admission Charge', code: 'ADM', frequency: FeeFrequency.ONE_TIME, description: 'One-time admission charge for new admissions' },
+    { name: 'Term Fee', code: 'TERM', frequency: FeeFrequency.ANNUAL, description: 'Payable twice a year in May and October (Rs.1350)' },
+    { name: 'Hostel Fee', code: 'HOSTEL', frequency: FeeFrequency.MONTHLY, description: 'Recurring hostel and boarding charges' },
+    { name: 'Transport Fee', code: 'TRANS', frequency: FeeFrequency.MONTHLY, description: 'Optional school bus route fee' },
+    { name: 'Uniform Fee', code: 'UNIF', frequency: FeeFrequency.ONE_TIME, description: 'Optional school uniform set fee' },
+    { name: 'Books Fee', code: 'BOOKS', frequency: FeeFrequency.ONE_TIME, description: 'Optional textbook and stationery kit' },
+    { name: 'Exam Fee', code: 'EXAM', frequency: FeeFrequency.ANNUAL, description: 'Annual semester and evaluation fee' },
   ];
 
   const createdFeeTypes: Record<string, any> = {};
-  for (const ft of feeTypesData) {
-    const created = await prisma.feeType.upsert({
+  for (const ft of feeTypes) {
+    const res = await prisma.feeType.upsert({
       where: { code: ft.code },
-      update: {},
+      update: { name: ft.name, frequency: ft.frequency, description: ft.description },
       create: ft,
     });
-    createdFeeTypes[ft.code] = created;
+    createdFeeTypes[ft.code] = res;
   }
+  console.log('✅ Configurable Fee Heads created');
 
-  console.log('✅ Fee Types seeded');
+  // 8. Dynamic Fee Structure Matrix per SRS specification:
+  // Tuition & Computer Fee amounts:
+  // Nursery: 1190 tuition, 0 computer = 1190 monthly total; Prospectus: 700; Admission: 0; Term: 1350
+  // LKG: 1290 tuition, 0 computer = 1290 monthly total; Prospectus: 700; Admission: 2000; Term: 1350
+  // UKG: 1290 tuition, 0 computer = 1290 monthly total; Prospectus: 700; Admission: 2000; Term: 1350
+  // Class I: 1390 tuition, 0 computer = 1390 monthly total; Prospectus: 700; Admission: 2000; Term: 1350
+  // Class II: 1390 tuition, 0 computer = 1390 monthly total; Prospectus: 700; Admission: 2000; Term: 1350
+  // Class III: 1490 tuition, 125 computer = 1615 monthly total; Prospectus: 700; Admission: 3000; Term: 1350
+  // Class IV: 1490 tuition, 125 computer = 1615 monthly total; Prospectus: 700; Admission: 3000; Term: 1350
+  // Class V: 1725 tuition, 125 computer = 1850 monthly total; Prospectus: 700; Admission: 3000; Term: 1350
+  // Class VI: 1725 tuition, 125 computer = 1850 monthly total; Prospectus: 700; Admission: 3000; Term: 1350
+  // Class VII: 1890 tuition, 125 computer = 2015 monthly total; Prospectus: 700; Admission: 5000; Term: 1350
+  // Class VIII: 1925 tuition, 125 computer = 2050 monthly total; Prospectus: 700; Admission: 5000; Term: 1350
+  // Class IX: 2390 tuition, 125 computer = 2515 monthly total; Prospectus: 700; Admission: 5000; Term: 1350
+  // Class X: 2490 tuition, 125 computer = 2615 monthly total; Prospectus: 0; Admission: 0; Term: 1350
+  // Class XI: 0 tuition, 0 computer; Prospectus: 1000; Admission: 0; Term: 1350
+  // Class XII: 0 tuition, 0 computer; Prospectus: 0; Admission: 0; Term: 1350
+  const srsFeeMatrix: Record<string, { tuition: number; computer: number; prospectus: number; admission: number; termFee: number; hostel: number }> = {
+    'Nursery':   { tuition: 1190, computer: 0,   prospectus: 700,  admission: 0,    termFee: 1350, hostel: 0 },
+    'LKG':       { tuition: 1290, computer: 0,   prospectus: 700,  admission: 2000, termFee: 1350, hostel: 0 },
+    'UKG':       { tuition: 1290, computer: 0,   prospectus: 700,  admission: 2000, termFee: 1350, hostel: 0 },
+    'Class I':   { tuition: 1390, computer: 0,   prospectus: 700,  admission: 2000, termFee: 1350, hostel: 0 },
+    'Class II':  { tuition: 1390, computer: 0,   prospectus: 700,  admission: 2000, termFee: 1350, hostel: 0 },
+    'Class III': { tuition: 1490, computer: 125, prospectus: 700,  admission: 3000, termFee: 1350, hostel: 0 },
+    'Class IV':  { tuition: 1490, computer: 125, prospectus: 700,  admission: 3000, termFee: 1350, hostel: 0 },
+    'Class V':   { tuition: 1725, computer: 125, prospectus: 700,  admission: 3000, termFee: 1350, hostel: 0 },
+    'Class VI':  { tuition: 1725, computer: 125, prospectus: 700,  admission: 3000, termFee: 1350, hostel: 0 },
+    'Class VII': { tuition: 1890, computer: 125, prospectus: 700,  admission: 5000, termFee: 1350, hostel: 0 },
+    'Class VIII':{ tuition: 1925, computer: 125, prospectus: 700,  admission: 5000, termFee: 1350, hostel: 0 },
+    'Class IX':  { tuition: 2390, computer: 125, prospectus: 700,  admission: 5000, termFee: 1350, hostel: 0 },
+    'Class X':   { tuition: 2490, computer: 125, prospectus: 0,    admission: 0,    termFee: 1350, hostel: 0 },
+    'Class XI':  { tuition: 0,    computer: 0,   prospectus: 1000, admission: 0,    termFee: 1350, hostel: 0 },
+    'Class XII': { tuition: 0,    computer: 0,   prospectus: 0,    admission: 0,    termFee: 1350, hostel: 0 },
+  };
 
-  // 6. Fee Structures for Classes (e.g. Class 8 and Class 1)
-  const class8 = createdClasses['Class 8'];
-  if (class8) {
-    const struct8 = await prisma.feeStructure.upsert({
-      where: {
-        academicYearId_classId: {
-          academicYearId: academicYear.id,
-          classId: class8.id,
-        },
-      },
-      update: {},
+  for (const [cName, fees] of Object.entries(srsFeeMatrix)) {
+    const cls = createdClasses[cName];
+    if (!cls) continue;
+
+    // Total yearly estimate for structure
+    const totalAmount = (fees.tuition + fees.computer) * 12 + fees.termFee * 2 + fees.admission + fees.prospectus;
+
+    const struct = await prisma.feeStructure.upsert({
+      where: { academicYearId_classId: { academicYearId: academicYear.id, classId: cls.id } },
+      update: { totalAmount, title: `${cName} Fee Structure 2026-27` },
       create: {
         academicYearId: academicYear.id,
-        classId: class8.id,
-        title: 'Class 8 Standard Fee Structure 2026-27',
-        totalAmount: 48000,
+        classId: cls.id,
+        title: `${cName} Fee Structure 2026-27`,
+        totalAmount,
       },
     });
 
-    // Structure items
-    await prisma.feeStructureItem.deleteMany({ where: { feeStructureId: struct8.id } });
-    await prisma.feeStructureItem.createMany({
-      data: [
-        { feeStructureId: struct8.id, feeTypeId: createdFeeTypes['TUIT'].id, amount: 3000, frequency: FeeFrequency.MONTHLY },
-        { feeStructureId: struct8.id, feeTypeId: createdFeeTypes['COMP'].id, amount: 500, frequency: FeeFrequency.MONTHLY },
-        { feeStructureId: struct8.id, feeTypeId: createdFeeTypes['EXAM'].id, amount: 2000, frequency: FeeFrequency.ANNUAL },
-        { feeStructureId: struct8.id, feeTypeId: createdFeeTypes['ANN'].id, amount: 4000, frequency: FeeFrequency.ANNUAL },
-      ],
+    await prisma.feeStructureItem.deleteMany({ where: { feeStructureId: struct.id } });
+
+    const itemsToCreate = [];
+
+    // Monthly Tuition
+    if (fees.tuition > 0) {
+      itemsToCreate.push({
+        feeStructureId: struct.id,
+        feeTypeId: createdFeeTypes['TUIT'].id,
+        amount: fees.tuition,
+        frequency: FeeFrequency.MONTHLY,
+        appliesTo: 'ALL',
+        componentName: 'Tuition Fee',
+        isActive: true,
+      });
+    }
+
+    // Computer Fee (Class III and above)
+    if (fees.computer > 0) {
+      itemsToCreate.push({
+        feeStructureId: struct.id,
+        feeTypeId: createdFeeTypes['COMP'].id,
+        amount: fees.computer,
+        frequency: FeeFrequency.MONTHLY,
+        appliesTo: 'ALL',
+        componentName: 'Computer Fee',
+        isActive: true,
+      });
+    }
+
+    // Prospectus Fee (One-time, new admission only)
+    if (fees.prospectus > 0) {
+      itemsToCreate.push({
+        feeStructureId: struct.id,
+        feeTypeId: createdFeeTypes['PROS'].id,
+        amount: fees.prospectus,
+        frequency: FeeFrequency.ONE_TIME,
+        appliesTo: 'NEW_ADMISSION_ONLY',
+        componentName: 'Prospectus Fee',
+        isActive: true,
+      });
+    }
+
+    // Admission Charge (One-time, new admission only)
+    if (fees.admission >= 0) {
+      itemsToCreate.push({
+        feeStructureId: struct.id,
+        feeTypeId: createdFeeTypes['ADM'].id,
+        amount: fees.admission,
+        frequency: FeeFrequency.ONE_TIME,
+        appliesTo: 'NEW_ADMISSION_ONLY',
+        componentName: 'Admission Charge',
+        isActive: true,
+      });
+    }
+
+    // Term Fee (Payable in May [month 5] and October [month 10])
+    if (fees.termFee > 0) {
+      itemsToCreate.push({
+        feeStructureId: struct.id,
+        feeTypeId: createdFeeTypes['TERM'].id,
+        amount: fees.termFee,
+        frequency: FeeFrequency.ANNUAL,
+        dueMonths: '5,10', // May and October
+        appliesTo: 'ALL',
+        componentName: 'Term Fee',
+        isActive: true,
+      });
+    }
+
+    // Hostel Fee Head (Configured per class by Director, default 0 or class 8 sample)
+    const hostelFeeAmount = cName === 'Class VIII' ? 3500 : 0;
+    itemsToCreate.push({
+      feeStructureId: struct.id,
+      feeTypeId: createdFeeTypes['HOSTEL'].id,
+      amount: hostelFeeAmount,
+      frequency: FeeFrequency.MONTHLY,
+      appliesTo: 'HOSTEL_ONLY',
+      componentName: 'Hostel Fee',
+      isActive: true,
     });
+
+    for (const item of itemsToCreate) {
+      await prisma.feeStructureItem.create({ data: item });
+    }
   }
+  console.log('✅ SRS Fee Structures created for all classes (Nursery to Class XII)');
 
-  const class1 = createdClasses['Class 1'];
-  if (class1) {
-    const struct1 = await prisma.feeStructure.upsert({
-      where: {
-        academicYearId_classId: {
-          academicYearId: academicYear.id,
-          classId: class1.id,
-        },
-      },
-      update: {},
-      create: {
-        academicYearId: academicYear.id,
-        classId: class1.id,
-        title: 'Class 1 Primary Fee Structure 2026-27',
-        totalAmount: 38000,
-      },
-    });
+  // 9. Discount Rules
+  const discountRules = [
+    { name: 'Sibling Concession', type: 'PERCENTAGE', value: 10, applicableFeeHeads: 'Tuition Fee', requiresApproval: false, description: '10% concession on tuition fee for younger sibling' },
+    { name: 'Staff Child Benefit', type: 'PERCENTAGE', value: 25, applicableFeeHeads: 'Tuition Fee', requiresApproval: false, description: '25% concession on tuition fee for children of school employees' },
+    { name: 'Merit Scholarship', type: 'PERCENTAGE', value: 50, applicableFeeHeads: 'Tuition Fee,Term Fee', requiresApproval: true, description: '50% academic merit waiver requires Principal/Director approval' },
+    { name: 'Director Discretion Concession', type: 'FIXED', value: 1000, applicableFeeHeads: null, requiresApproval: true, description: 'Special discretionary relief approved by Director' },
+  ];
 
-    await prisma.feeStructureItem.deleteMany({ where: { feeStructureId: struct1.id } });
-    await prisma.feeStructureItem.createMany({
-      data: [
-        { feeStructureId: struct1.id, feeTypeId: createdFeeTypes['TUIT'].id, amount: 2500, frequency: FeeFrequency.MONTHLY },
-        { feeStructureId: struct1.id, feeTypeId: createdFeeTypes['COMP'].id, amount: 300, frequency: FeeFrequency.MONTHLY },
-        { feeStructureId: struct1.id, feeTypeId: createdFeeTypes['ANN'].id, amount: 3500, frequency: FeeFrequency.ANNUAL },
-      ],
-    });
+  for (const dr of discountRules) {
+    const existing = await prisma.discountRule.findFirst({ where: { name: dr.name } });
+    if (!existing) {
+      await prisma.discountRule.create({ data: dr });
+    }
   }
+  console.log('✅ Flexible Discount Rules initialized');
 
-  // 7. Seed Sample Students with Parents, Academic Records, and Fees
+  // 10. Seed Sample Students with both Day Scholars and Hostel Students
   const sampleStudents = [
     {
-      admissionNumber: 'ADM-2026-001',
+      admissionNumber: 'PBPS-2026-0001',
       firstName: 'Aarav',
       lastName: 'Sharma',
       gender: Gender.MALE,
       dob: new Date('2013-05-14'),
-      bloodGroup: 'B+',
-      aadhaar: '7482-9102-3841',
-      className: 'Class 8',
-      sectionName: 'A',
-      rollNo: '8A01',
-      parent: {
-        fatherName: 'Rajesh Sharma',
-        motherName: 'Meenakshi Sharma',
-        phone: '+91 98711 00221',
-        email: 'rajesh.sharma@example.com',
-        occupation: 'Software Architect',
-        address: 'Villa 14, Palm Meadows, Bangalore',
-      },
-      feeStatus: FeeStatus.PAID,
+      className: 'Class VIII',
+      isHostel: true,
+      hostelRoom: 'B-204',
+      parentName: 'Rajesh Sharma',
+      phone: '+91 98711 00221',
+      email: 'rajesh.sharma@example.com',
     },
     {
-      admissionNumber: 'ADM-2026-002',
+      admissionNumber: 'PBPS-2026-0002',
       firstName: 'Ananya',
       lastName: 'Patel',
       gender: Gender.FEMALE,
-      dob: new Date('2013-08-22'),
-      bloodGroup: 'O+',
-      aadhaar: '4928-1093-5712',
-      className: 'Class 8',
-      sectionName: 'A',
-      rollNo: '8A02',
-      parent: {
-        fatherName: 'Bhavin Patel',
-        motherName: 'Dipti Patel',
-        phone: '+91 98711 00222',
-        email: 'bhavin.patel@example.com',
-        occupation: 'Business Owner',
-        address: 'B-402, Shivalik Residency, Ahmedabad',
-      },
-      feeStatus: FeeStatus.PENDING,
+      dob: new Date('2017-08-22'),
+      className: 'Class IV',
+      isHostel: false,
+      parentName: 'Bhavesh Patel',
+      phone: '+91 98722 00332',
+      email: 'bhavesh.patel@example.com',
     },
     {
-      admissionNumber: 'ADM-2026-003',
-      firstName: 'Rohan',
-      lastName: 'Iyer',
+      admissionNumber: 'PBPS-2026-0003',
+      firstName: 'Vihaan',
+      lastName: 'Verma',
       gender: Gender.MALE,
-      dob: new Date('2013-11-03'),
-      bloodGroup: 'A+',
-      aadhaar: '6192-3847-1902',
-      className: 'Class 8',
-      sectionName: 'B',
-      rollNo: '8B01',
-      parent: {
-        fatherName: 'Suresh Iyer',
-        motherName: 'Lakshmi Iyer',
-        phone: '+91 98711 00223',
-        email: 'suresh.iyer@example.com',
-        occupation: 'Chartered Accountant',
-        address: '12-C, Emerald Greens, Chennai',
-      },
-      feeStatus: FeeStatus.PARTIAL,
+      dob: new Date('2019-11-10'),
+      className: 'Class II',
+      isHostel: false,
+      parentName: 'Sanjay Verma',
+      phone: '+91 98733 00443',
+      email: 'sanjay.verma@example.com',
     },
     {
-      admissionNumber: 'ADM-2026-004',
+      admissionNumber: 'PBPS-2026-0004',
       firstName: 'Diya',
-      lastName: 'Choudhury',
+      lastName: 'Reddy',
       gender: Gender.FEMALE,
-      dob: new Date('2020-03-15'),
-      bloodGroup: 'AB+',
-      aadhaar: '8492-4820-1934',
-      className: 'Class 1',
-      sectionName: 'A',
-      rollNo: '1A01',
-      parent: {
-        fatherName: 'Amit Choudhury',
-        motherName: 'Rina Choudhury',
-        phone: '+91 98711 00224',
-        email: 'amit.c@example.com',
-        occupation: 'Civil Engineer',
-        address: 'Flat 301, Lakeview Heights, Kolkata',
-      },
-      feeStatus: FeeStatus.OVERDUE,
+      dob: new Date('2022-02-18'),
+      className: 'Nursery',
+      isHostel: false,
+      parentName: 'K. V. Reddy',
+      phone: '+91 98744 00554',
+      email: 'kv.reddy@example.com',
     },
     {
-      admissionNumber: 'ADM-2026-005',
-      firstName: 'Kabir',
-      lastName: 'Malhotra',
+      admissionNumber: 'PBPS-2026-0005',
+      firstName: 'Rohan',
+      lastName: 'Singh',
       gender: Gender.MALE,
-      dob: new Date('2020-07-29'),
-      bloodGroup: 'O-',
-      aadhaar: '3920-5819-2940',
-      className: 'Class 1',
-      sectionName: 'B',
-      rollNo: '1B01',
-      parent: {
-        fatherName: 'Vikram Malhotra',
-        motherName: 'Natasha Malhotra',
-        phone: '+91 98711 00225',
-        email: 'vikram.malhotra@example.com',
-        occupation: 'Corporate Lawyer',
-        address: 'House 88, Defence Colony, New Delhi',
-      },
-      feeStatus: FeeStatus.PAID,
+      dob: new Date('2016-03-25'),
+      className: 'Class V',
+      isHostel: false,
+      parentName: 'Manish Singh',
+      phone: '+91 98755 00665',
+      email: 'manish.singh@example.com',
     },
+    {
+      admissionNumber: 'PBPS-2026-0006',
+      firstName: 'Ishaan',
+      lastName: 'Gupta',
+      gender: Gender.MALE,
+      dob: new Date('2010-09-15'),
+      className: 'Class XI',
+      isHostel: false,
+      isNonAttending: true,
+      parentName: 'Sunil Gupta',
+      phone: '+91 98766 00776',
+      email: 'sunil.gupta@example.com',
+    }
   ];
 
   for (const s of sampleStudents) {
+    const cls = createdClasses[s.className];
+    if (!cls) continue;
+
     const parent = await prisma.parent.upsert({
-      where: { primaryPhone: s.parent.phone },
+      where: { primaryPhone: s.phone },
       update: {},
       create: {
-        fatherName: s.parent.fatherName,
-        motherName: s.parent.motherName,
-        primaryPhone: s.parent.phone,
-        email: s.parent.email,
-        occupation: s.parent.occupation,
-        address: s.parent.address,
+        fatherName: s.parentName,
+        primaryPhone: s.phone,
+        email: s.email,
+        address: 'PBPS Campus Area, New Delhi',
       },
     });
 
     const student = await prisma.student.upsert({
       where: { admissionNumber: s.admissionNumber },
-      update: {},
+      update: {
+        isHostelStudent: s.isHostel,
+        hostelRoomNumber: s.hostelRoom || null,
+        isNonAttending: !!(s as any).isNonAttending,
+      },
       create: {
         admissionNumber: s.admissionNumber,
         firstName: s.firstName,
         lastName: s.lastName,
         dateOfBirth: s.dob,
         gender: s.gender,
-        bloodGroup: s.bloodGroup,
-        aadhaarNumber: s.aadhaar,
-        address: s.parent.address,
         status: StudentStatus.ACTIVE,
+        isHostelStudent: s.isHostel,
+        hostelRoomNumber: s.hostelRoom || null,
+        hostelAdmissionDate: s.isHostel ? new Date('2026-04-01') : null,
+        isNonAttending: !!(s as any).isNonAttending,
+        admissionDate: new Date('2026-04-01'),
+        address: 'PBPS Campus Area, New Delhi',
+        city: 'New Delhi',
+        state: 'Delhi',
+        pincode: '110001',
       },
     });
 
     await prisma.studentParent.upsert({
-      where: {
-        studentId_parentId: {
-          studentId: student.id,
-          parentId: parent.id,
-        },
-      },
+      where: { studentId_parentId: { studentId: student.id, parentId: parent.id } },
       update: {},
       create: {
         studentId: student.id,
@@ -424,150 +591,19 @@ async function main() {
       },
     });
 
-    const targetClass = createdClasses[s.className];
-    const targetSection = createdSections[s.className]?.find(sec => sec.name === s.sectionName);
-
-    if (targetClass) {
-      await prisma.studentAcademicRecord.upsert({
-        where: {
-          studentId_academicYearId: {
-            studentId: student.id,
-            academicYearId: academicYear.id,
-          },
-        },
-        update: {
-          classId: targetClass.id,
-          sectionId: targetSection?.id,
-          rollNumber: s.rollNo,
-        },
-        create: {
-          studentId: student.id,
-          academicYearId: academicYear.id,
-          classId: targetClass.id,
-          sectionId: targetSection?.id,
-          rollNumber: s.rollNo,
-        },
-      });
-
-      // Generate April, May, June fees
-      const months = [
-        { month: 4, name: 'April' },
-        { month: 5, name: 'May' },
-        { month: 6, name: 'June' },
-      ];
-
-      for (const m of months) {
-        const isPaid = s.feeStatus === FeeStatus.PAID;
-        const isPartial = s.feeStatus === FeeStatus.PARTIAL && m.month === 4;
-        const isOverdue = s.feeStatus === FeeStatus.OVERDUE && m.month === 4;
-        const feeAmount = s.className === 'Class 8' ? 3500 : 2800;
-        const paidAmount = isPaid ? feeAmount : (isPartial ? 1500 : 0);
-        const remaining = feeAmount - paidAmount;
-        const currentStatus = isPaid ? FeeStatus.PAID : (isPartial ? FeeStatus.PARTIAL : (isOverdue ? FeeStatus.OVERDUE : FeeStatus.PENDING));
-
-        const studentFee = await prisma.studentFee.upsert({
-          where: {
-            studentId_academicYearId_feeTypeId_month_year: {
-              studentId: student.id,
-              academicYearId: academicYear.id,
-              feeTypeId: createdFeeTypes['TUIT'].id,
-              month: m.month,
-              year: 2026,
-            },
-          },
-          update: {},
-          create: {
-            studentId: student.id,
-            academicYearId: academicYear.id,
-            feeTypeId: createdFeeTypes['TUIT'].id,
-            month: m.month,
-            year: 2026,
-            title: `${m.name} Tuition Fee`,
-            amount: feeAmount,
-            discountAmount: 0,
-            fineAmount: isOverdue ? 200 : 0,
-            netAmount: feeAmount + (isOverdue ? 200 : 0),
-            paidAmount: paidAmount,
-            remainingAmount: remaining + (isOverdue ? 200 : 0),
-            dueDate: new Date(2026, m.month - 1, 10),
-            status: currentStatus,
-          },
-        });
-
-        // If paid, create payment and receipt
-        if (paidAmount > 0) {
-          const payment = await prisma.payment.create({
-            data: {
-              studentId: student.id,
-              academicYearId: academicYear.id,
-              collectedById: accountant.id,
-              amount: paidAmount,
-              paymentMethod: PaymentMethod.UPI,
-              paymentStatus: PaymentStatus.SUCCESS,
-              transactionRef: `UPI-${Date.now().toString().slice(-8)}`,
-              notes: `${m.name} term fee collection`,
-              paidAt: new Date(2026, m.month - 1, 5),
-              items: {
-                create: [
-                  {
-                    studentFeeId: studentFee.id,
-                    amountPaid: paidAmount,
-                  },
-                ],
-              },
-            },
-          });
-
-          const receiptCount = await prisma.receipt.count();
-          const receiptNo = `REC-2026-${(receiptCount + 1).toString().padStart(6, '0')}`;
-
-          await prisma.receipt.create({
-            data: {
-              receiptNumber: receiptNo,
-              paymentId: payment.id,
-              studentId: student.id,
-              totalAmount: feeAmount,
-              previousBalance: 0,
-              paidAmount: paidAmount,
-              remainingBalance: remaining,
-              generatedAt: payment.paidAt,
-            },
-          });
-        }
-      }
-    }
+    await prisma.studentAcademicRecord.upsert({
+      where: { studentId_academicYearId: { studentId: student.id, academicYearId: academicYear.id } },
+      update: {},
+      create: {
+        studentId: student.id,
+        academicYearId: academicYear.id,
+        classId: cls.id,
+        rollNumber: `R-${student.admissionNumber.slice(-3)}`,
+      },
+    });
   }
 
-  // 8. Notifications & Audit Log
-  await prisma.notification.createMany({
-    data: [
-      {
-        title: 'Academic Year 2026-27 Active',
-        message: 'The academic session 2026-27 is configured and live for admissions and fee billing.',
-        type: 'SUCCESS',
-        isRead: false,
-      },
-      {
-        title: 'Pending Fee Reminders',
-        message: 'Automated pending fee digest for April 2026 is ready for review.',
-        type: 'WARNING',
-        isRead: false,
-      },
-    ],
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      userId: superAdmin.id,
-      userName: superAdmin.fullName,
-      action: 'SYSTEM_INITIALIZE',
-      module: 'SETTINGS',
-      recordId: 'default',
-      newData: JSON.stringify({ event: 'Initial database seeding completed successfully' }),
-      ipAddress: '127.0.0.1',
-    },
-  });
-
+  console.log('✅ Sample Students seeded (Day Scholars & Hostel Students)');
   console.log('🎉 Seeding successfully finished!');
 }
 

@@ -1,11 +1,14 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config();
+dotenv.config({ override: true });
+
+const resolvedDbUrl = process.env.DATABASE_URL || '';
 
 export const config = {
   port: 3000,
-  databaseUrl: process.env.DATABASE_URL || 'mysql://school_user:SchoolPass123!@localhost:3306/school_management',
+  databaseUrl: resolvedDbUrl,
+  directUrl: process.env.DIRECT_URL || '',
   jwtSecret: process.env.JWT_SECRET || 'edumanage_jwt_secret_production_key_2026_xyz',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'edumanage_refresh_secret_production_key_2026_abc',
   jwtExpiresIn: '24h',
@@ -20,4 +23,11 @@ export const config = {
     fromEmail: process.env.SCHOOL_EMAIL || 'finance@pbps.edu.in',
   },
   storagePath: path.resolve(process.env.STORAGE_PATH || './uploads'),
+};
+
+export const isDatabaseConfigured = (): boolean => {
+  const url = process.env.DATABASE_URL || '';
+  if (!url) return false;
+  if (url.includes('[YOUR-PASSWORD]') || url.includes('[PASSWORD]')) return false;
+  return true;
 };

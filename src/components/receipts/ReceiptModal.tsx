@@ -188,9 +188,26 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
               {error}
             </div>
           ) : receipt ? (
-            <div id="printable-receipt" className="border-2 border-slate-900 rounded-xl p-3.5 sm:p-6 bg-white shadow-xs overflow-x-hidden">
+            <div id="printable-receipt" className="relative border-2 border-slate-900 rounded-xl p-3.5 sm:p-6 bg-white shadow-xs overflow-x-hidden">
+              {/* DUPLICATE COPY Watermark / Banner (SRS Section 6 & Acceptance Test 8) */}
+              {(receipt.isDuplicate || (receipt.reprintCount && receipt.reprintCount > 0)) && (
+                <div className="mb-3 flex items-center justify-between bg-rose-600 text-white font-black text-xs uppercase px-4 py-1.5 rounded-lg tracking-widest shadow-xs">
+                  <span>*** DUPLICATE COPY ***</span>
+                  <span className="text-[10px] font-semibold tracking-normal lowercase">
+                    reprint #{receipt.reprintCount || 1}
+                  </span>
+                </div>
+              )}
+
               {/* Receipt Header Banner */}
-              <div className="border-b-2 border-slate-800 pb-4 text-center">
+              <div className="border-b-2 border-slate-800 pb-4 text-center relative">
+                {(receipt.isDuplicate || (receipt.reprintCount && receipt.reprintCount > 0)) && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 select-none">
+                    <span className="text-6xl sm:text-7xl font-black text-rose-900 -rotate-12 uppercase tracking-widest">
+                      DUPLICATE COPY
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-center gap-3 mb-2">
                   <SchoolLogo className="h-12 w-12" />
                   <div className="text-left">
@@ -198,7 +215,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
                       {receipt.school?.schoolName || 'Pragya Bharti Public School'}
                     </h1>
                     <span className="text-[11px] font-bold text-amber-700 uppercase tracking-widest block">
-                      PBPS · AFFILIATED & RECOGNIZED
+                      PBPS · AFFILIATION NO: {receipt.school?.registrationNumber || '2130000'}
                     </span>
                   </div>
                 </div>
@@ -206,15 +223,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
                   {receipt.school?.tagline || 'Knowledge, Character & Excellence (PBPS)'}
                 </p>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  {receipt.school?.address || 'Knowledge Park, Campus Road'} · Phone: {receipt.school?.phone || '+91 98765 43210'} · Email: {receipt.school?.email || 'admissions@pbps.edu.in'}
+                  {receipt.school?.address || 'Campus Road, PBPS Campus'} · Phone: {receipt.school?.phone || '+91 98765 43210'} · Email: {receipt.school?.email || 'admissions@pbps.edu.in'}
                 </p>
                 <div className="inline-block mt-2 bg-slate-900 text-white text-[11px] font-bold px-4 py-1 rounded uppercase tracking-wider">
-                  Official Fee Payment Receipt
+                  Official Fee Payment Receipt {(receipt.isDuplicate || (receipt.reprintCount && receipt.reprintCount > 0)) ? '- DUPLICATE COPY' : ''}
                 </div>
               </div>
 
-              {/* Receipt Meta (Receipt No, Date, Session, Method) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 py-3 border-b border-slate-200 text-xs">
+              {/* Receipt Meta (Receipt No, Date, Session, Method, Receiving Staff) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3 py-3 border-b border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500 block text-[10px] uppercase font-semibold">Receipt Number</span>
                   <span className="font-mono font-bold text-slate-900">{receipt.receiptNumber}</span>
@@ -239,14 +256,22 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
                   <span className="text-slate-500 block text-[10px] uppercase font-semibold">Payment Mode</span>
                   <span className="font-semibold text-indigo-700">{receipt.payment?.paymentMethod}</span>
                 </div>
+                <div>
+                  <span className="text-slate-500 block text-[10px] uppercase font-semibold">Receiving Staff</span>
+                  <span className="font-semibold text-slate-800">
+                    {(typeof receipt.payment?.collectedBy === 'object'
+                      ? receipt.payment?.collectedBy?.fullName || receipt.payment?.collectedBy?.username
+                      : receipt.payment?.collectedBy) || receipt.receivingStaff || 'Accounts Counter'}
+                  </span>
+                </div>
               </div>
 
-              {/* Student Particulars Card */}
+              {/* Student Particulars Card (SRS Section 6: Name, Admission No, Class, Hostel/Day Scholar) */}
               <div className="my-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 sm:p-3.5 text-xs">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
                   Student Particulars
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                   <div>
                     <span className="text-slate-500 text-[11px]">Student Name:</span>
                     <div className="font-bold text-slate-900">{receipt.studentDetails?.name}</div>
@@ -262,6 +287,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
                     </div>
                   </div>
                   <div>
+                    <span className="text-slate-500 text-[11px]">Boarding Status:</span>
+                    <div className="font-bold text-indigo-800">
+                      {receipt.studentDetails?.isHostelStudent ? 'Hostel Resident' : 'Day Scholar'}
+                    </div>
+                  </div>
+                  <div>
                     <span className="text-slate-500 text-[11px]">Parent / Guardian:</span>
                     <div className="font-medium text-slate-800">{receipt.studentDetails?.fatherName}</div>
                   </div>
@@ -270,7 +301,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
                     <div className="font-medium text-slate-800">{receipt.studentDetails?.phone}</div>
                   </div>
                   {receipt.payment?.transactionRef && (
-                    <div>
+                    <div className="md:col-span-2">
                       <span className="text-slate-500 text-[11px]">Transaction Ref:</span>
                       <div className="font-mono text-slate-700">{receipt.payment.transactionRef}</div>
                     </div>

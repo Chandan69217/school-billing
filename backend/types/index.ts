@@ -12,6 +12,7 @@ export interface UserPayload {
   username: string;
   fullName: string;
   role: RoleType;
+  permissions?: string[];
 }
 
 export interface ApiResponse<T = any> {

@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '../api/client.js';
+import { useAuth } from '../contexts/AuthContext.js';
+import { XCircle, X } from 'lucide-react';
 
 interface PaymentsPageProps {
   onOpenFeeCollection: (studentId?: string) => void;
@@ -26,6 +28,7 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
   onOpenFeeCollection,
   onOpenReceipt
 }) => {
+  const { hasPermission } = useAuth();
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -33,12 +36,43 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 10 });
 
+  // Cancel Payment Dialog state
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   // Online Razorpay Test Simulation State
   const [showOnlineModal, setShowOnlineModal] = useState(false);
   const [onlineStudentId, setOnlineStudentId] = useState('');
   const [onlineAmount, setOnlineAmount] = useState('3500');
   const [onlineProcessing, setOnlineProcessing] = useState(false);
   const [onlineSuccess, setOnlineSuccess] = useState<any | null>(null);
+
+  const handleCancelPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelTarget || !cancelReason.trim()) {
+      toast.error('Mandatory cancellation reason required');
+      return;
+    }
+    setCancelling(true);
+    try {
+      const res = await apiClient.post(`/payments/${cancelTarget.id}/cancel`, {
+        reason: cancelReason.trim()
+      });
+      if (res.data?.success) {
+        toast.success('Payment successfully cancelled and dues restored');
+        setCancelTarget(null);
+        setCancelReason('');
+        fetchPayments();
+      } else {
+        toast.error(res.data?.message || 'Failed to cancel payment');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to cancel payment');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const fetchPayments = async () => {
     setLoading(true);
@@ -227,8 +261,20 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {payments.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">{p.receiptNumber}</td>
+                  <tr key={p.id} className={`hover:bg-slate-50/80 transition-colors ${p.isCancelled ? 'bg-rose-50/30' : ''}`}>
+                    <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                      <div className="flex items-center gap-1.5">
+                        <span>{p.receiptNumber || p.receipt?.receiptNumber || 'N/A'}</span>
+                        {p.isCancelled && (
+                          <span
+                            className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded cursor-help"
+                            title={`Cancelled: ${p.cancellationReason || 'No reason specified'}`}
+                          >
+                            CANCELLED
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-3 px-4 text-slate-600">
                       {new Date(p.paidAt).toLocaleDateString('en-IN', {
                         day: '2-digit',
@@ -237,10 +283,19 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
                       })}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="font-semibold text-slate-900">{p.studentName}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{p.admissionNumber}</div>
+                      <div className="font-semibold text-slate-900">
+                        {p.studentName || (p.student ? `${p.student.firstName} ${p.student.lastName || ''}`.trim() : 'Student')}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">{p.admissionNumber || p.student?.admissionNumber || ''}</div>
+                      {p.isCancelled && (
+                        <div className="text-[10px] text-rose-600 italic">
+                          Reason: {p.cancellationReason}
+                        </div>
+                      )}
                     </td>
-                    <td className="py-3 px-4 text-slate-700">{p.className} ({p.sectionName})</td>
+                    <td className="py-3 px-4 text-slate-700">
+                      {p.className || p.student?.academicRecords?.[0]?.class?.name || 'Class'} {p.sectionName ? `(${p.sectionName})` : ''}
+                    </td>
                     <td className="py-3 px-4">
                       <span className="font-semibold text-slate-800">{p.paymentMethod}</span>
                       {p.transactionRef && (
@@ -249,23 +304,29 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-emerald-700 text-sm">
+                    <td className={`py-3 px-4 text-right font-mono font-bold tabular-nums text-sm ${
+                      p.isCancelled ? 'line-through text-slate-400' : 'text-emerald-700'
+                    }`}>
                       ₹{Number(p.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="py-3 px-4 text-slate-600">{p.collectedBy}</td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {typeof p.collectedBy === 'object'
+                        ? p.collectedBy?.fullName || p.collectedBy?.username || 'Staff'
+                        : p.collectedByName || p.collectedBy || 'Staff'}
+                    </td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {p.receiptId && (
+                        {(p.receiptId || p.receipt?.id) && (
                           <>
                             <button
-                              onClick={() => onOpenReceipt(p.receiptId)}
+                              onClick={() => onOpenReceipt(p.receiptId || p.receipt?.id)}
                               className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded"
                               title="View Official Receipt"
                             >
                               <Eye className="h-4 w-4" />
                             </button>
                             <a
-                              href={`/api/receipts/${p.receiptId}/pdf`}
+                              href={`/api/receipts/${p.receiptId || p.receipt?.id}/pdf`}
                               target="_blank"
                               rel="noreferrer"
                               className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded"
@@ -274,6 +335,18 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
                               <Download className="h-4 w-4" />
                             </a>
                           </>
+                        )}
+                        {!p.isCancelled && hasPermission('payment.cancel') && (
+                          <button
+                            onClick={() => {
+                              setCancelTarget(p);
+                              setCancelReason('');
+                            }}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                            title="Cancel Payment (Reverses fee balance)"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </button>
                         )}
                       </div>
                     </td>
@@ -396,6 +469,67 @@ export const PaymentsPage: React.FC<PaymentsPageProps> = ({
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Payment Confirmation Modal (SRS Section 6: Audit trail & Mandatory reason) */}
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
+                <AlertCircle className="h-5 w-5" />
+                <span>Cancel Payment #{cancelTarget.receiptNumber}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelTarget(null)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCancelPayment} className="space-y-4 text-xs">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 space-y-1">
+                <div className="font-bold">Caution: Destructive Financial Action</div>
+                <p className="text-[11px] leading-relaxed">
+                  Cancelling this payment of <strong>₹{Number(cancelTarget.amount).toLocaleString('en-IN')}</strong> will restore the student's fee dues and log this audit trail permanently.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Mandatory Cancellation Reason <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  placeholder="Explain why this payment is being voided (e.g. cheque bounced, incorrect amount entered by cashier, duplicate entry)..."
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 p-2 text-xs focus:ring-1 focus:ring-rose-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setCancelTarget(null)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 font-semibold"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={cancelling || !cancelReason.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-rose-600 text-white font-semibold hover:bg-rose-700 disabled:opacity-50"
+                >
+                  {cancelling ? 'Voiding Payment...' : 'Confirm Void Payment'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

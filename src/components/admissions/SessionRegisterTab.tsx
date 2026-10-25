@@ -22,19 +22,25 @@ import { CancelAdmissionModal } from './CancelAdmissionModal.js';
 interface SessionRegisterTabProps {
   sessions: any[];
   selectedSessionId: string;
-  onSelectSessionId: (id: string) => void;
-  onOpenFeeCollectionForStudent: (studentId: string) => void;
-  onStartAdmissionForSession: (sessionId: string) => void;
-  onOpenPromotionTab: (sessionId: string) => void;
+  classes?: any[];
+  onSelectSessionId?: (id: string) => void;
+  onSelectSession?: (id: string) => void;
+  onOpenFeeCollectionForStudent?: (studentId: string) => void;
+  onStartAdmissionForSession?: (sessionId: string) => void;
+  onOpenPromotionTab?: (sessionId: string) => void;
+  onEnrollStudent?: () => void;
 }
 
 export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
   sessions,
   selectedSessionId,
+  classes,
   onSelectSessionId,
+  onSelectSession,
   onOpenFeeCollectionForStudent,
   onStartAdmissionForSession,
-  onOpenPromotionTab
+  onOpenPromotionTab,
+  onEnrollStudent
 }) => {
   const navigate = useNavigate();
   const [students, setStudents] = useState<any[]>([]);
@@ -83,34 +89,69 @@ export const SessionRegisterTab: React.FC<SessionRegisterTabProps> = ({
   const targetCount = currentSession?.targetEnrollment || 300;
   const percentFilled = Math.min(100, Math.round((enrolledCount / targetCount) * 100));
 
-  // Export CSV
+  // Export CSV with UTF-8 BOM, escaped quotes and DD-MM-YYYY dates
   const handleExportCSV = () => {
     if (filteredStudents.length === 0) return;
-    const headers = ['Admission Number', 'Student Name', 'Gender', 'Class', 'Section', 'Roll No', 'Parent Name', 'Parent Phone', 'Admission Date', 'Fee Status', 'Total Fee', 'Paid Fee', 'Remaining Fee'];
+
+    const escapeCsv = (val: any): string => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const formatDate = (dateVal: string | Date | null | undefined): string => {
+      if (!dateVal) return '';
+      const dt = new Date(dateVal);
+      if (isNaN(dt.getTime())) return '';
+      const day = dt.getDate().toString().padStart(2, '0');
+      const month = (dt.getMonth() + 1).toString().padStart(2, '0');
+      const year = dt.getFullYear();
+      return `${day}-${month}-${year}`;
+    };
+
+    const headers = [
+      'Admission Number',
+      'Student Name',
+      'Gender',
+      'Class',
+      'Section',
+      'Roll No',
+      'Parent Name',
+      'Parent Phone',
+      'Admission Date (DD-MM-YYYY)',
+      'Fee Status',
+      'Total Fee (INR)',
+      'Paid Fee (INR)',
+      'Remaining Fee (INR)'
+    ];
+
     const rows = filteredStudents.map(s => [
-      s.admissionNumber,
-      s.fullName,
-      s.gender,
-      s.className,
-      s.sectionName,
-      s.rollNumber || '',
-      s.parentName,
-      s.parentPhone,
-      new Date(s.admissionDate).toLocaleDateString('en-IN'),
-      s.feeSummary?.feeStatus || 'PENDING',
-      s.feeSummary?.totalAmount || 0,
-      s.feeSummary?.paidAmount || 0,
-      s.feeSummary?.remainingAmount || 0
+      escapeCsv(s.admissionNumber),
+      escapeCsv(s.fullName),
+      escapeCsv(s.gender),
+      escapeCsv(s.className),
+      escapeCsv(s.sectionName),
+      escapeCsv(s.rollNumber || ''),
+      escapeCsv(s.parentName),
+      escapeCsv(s.parentPhone),
+      escapeCsv(formatDate(s.admissionDate)),
+      escapeCsv(s.feeSummary?.feeStatus || 'PENDING'),
+      escapeCsv(s.feeSummary?.totalAmount || 0),
+      escapeCsv(s.feeSummary?.paidAmount || 0),
+      escapeCsv(s.feeSummary?.remainingAmount || 0)
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    // Prepend UTF-8 BOM \uFEFF so Excel correctly renders Unicode without mojibake
+    const csvContent = '\uFEFF' + [headers.map(h => `"${h}"`).join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.href = url;
     link.setAttribute('download', `session_${currentSession?.name || 'admissions'}_register.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   };
 
   return (

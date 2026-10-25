@@ -8,7 +8,19 @@ const prisma = new PrismaClient();
 // Academic Years / Sessions
 export const getAcademicYears = async (req: Request, res: Response): Promise<void> => {
   try {
+    const includeArchived = req.query.includeArchived === 'true' || req.query.all === 'true';
+    const archivedOnly = req.query.archivedOnly === 'true' || req.query.status === 'ARCHIVED';
+
+    const where: any = {};
+    if (archivedOnly) {
+      where.isArchived = true;
+    } else if (!includeArchived) {
+      // Default: exclude archived sessions everywhere (dropdowns, admissions, billing, dues)
+      where.isArchived = false;
+    }
+
     const years = await prisma.academicYear.findMany({
+      where,
       orderBy: { startDate: 'desc' },
       include: {
         _count: {
@@ -80,8 +92,89 @@ export const createAcademicYear = async (req: AuthenticatedRequest, res: Respons
       description
     } = req.body;
 
-    if (!name || !startDate || !endDate) {
-      res.status(400).json({ success: false, message: 'Name, startDate, and endDate are required' });
+    const errors: Record<string, string> = {};
+
+    // 1. Session Name validation: required, trimmed, format YYYY-YY or YYYY-YYYY with endYear = startYear + 1
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      errors.name = 'Session name is required.';
+    } else {
+      const match = trimmedName.match(/^(\d{4})-(\d{2}|\d{4})$/);
+      if (!match) {
+        errors.name = 'Session name must follow format YYYY-YY (e.g. 2026-27) or YYYY-YYYY (e.g. 2026-2027).';
+      } else {
+        const startYearNum = parseInt(match[1], 10);
+        const endPart = match[2];
+        const endYearNum = endPart.length === 2 ? Math.floor(startYearNum / 100) * 100 + parseInt(endPart, 10) : parseInt(endPart, 10);
+        if (endYearNum !== startYearNum + 1) {
+          errors.name = 'Session end year must be exactly one year after start year (e.g. 2026-27).';
+        }
+      }
+    }
+
+    // 2. Reject duplicate session case-insensitively, including against ARCHIVED sessions
+    if (trimmedName && !errors.name) {
+      const existing = await prisma.academicYear.findFirst({
+        where: {
+          name: { equals: trimmedName, mode: 'insensitive' }
+        }
+      });
+      if (existing) {
+        errors.name = `Academic session ${trimmedName} already exists.`;
+      }
+    }
+
+    // 3. Start Date and End Date validation
+    if (!startDate) {
+      errors.startDate = 'Start date is required.';
+    }
+    if (!endDate) {
+      errors.endDate = 'End date is required.';
+    }
+
+    let parsedStart: Date | null = null;
+    let parsedEnd: Date | null = null;
+
+    if (startDate && endDate) {
+      parsedStart = new Date(startDate);
+      parsedEnd = new Date(endDate);
+
+      if (isNaN(parsedStart.getTime())) {
+        errors.startDate = 'Please provide a valid start date.';
+      }
+      if (isNaN(parsedEnd.getTime())) {
+        errors.endDate = 'Please provide a valid end date.';
+      }
+
+      if (parsedStart && parsedEnd && !isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
+        if (parsedEnd <= parsedStart) {
+          errors.endDate = 'End date must be after start date.';
+        } else {
+          // 4. Overlap check against existing sessions (including archived sessions)
+          const allSessions = await prisma.academicYear.findMany({
+            select: { id: true, name: true, startDate: true, endDate: true }
+          });
+
+          const overlapping = allSessions.find(s => {
+            const sStart = new Date(s.startDate);
+            const sEnd = new Date(s.endDate);
+            return parsedStart! <= sEnd && parsedEnd! >= sStart;
+          });
+
+          if (overlapping) {
+            errors.startDate = `Dates overlap with session ${overlapping.name}.`;
+            errors.endDate = `Dates overlap with session ${overlapping.name}.`;
+          }
+        }
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({
+        success: false,
+        message: Object.values(errors)[0],
+        errors
+      });
       return;
     }
 
@@ -91,9 +184,9 @@ export const createAcademicYear = async (req: AuthenticatedRequest, res: Respons
 
     const year = await prisma.academicYear.create({
       data: {
-        name: name.trim(),
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
+        name: trimmedName,
+        startDate: parsedStart!,
+        endDate: parsedEnd!,
         isActive: !!isActive,
         admissionStatus: admissionStatus || 'OPEN',
         admissionStartDate: admissionStartDate ? new Date(admissionStartDate) : null,
@@ -115,6 +208,239 @@ export const createAcademicYear = async (req: AuthenticatedRequest, res: Respons
     });
 
     res.status(201).json({ success: true, data: year, message: 'Academic session created successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      res.status(400).json({
+        success: false,
+        message: `Academic session already exists.`,
+        errors: { name: `Academic session already exists.` }
+      });
+      return;
+    }
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Archive an academic session (with safety checks and audit)
+export const archiveAcademicYear = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const session = await prisma.academicYear.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            studentsAcademic: true,
+            feeStructures: true,
+            payments: true
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      res.status(404).json({ success: false, message: 'Academic session not found' });
+      return;
+    }
+
+    if (session.isActive) {
+      res.status(400).json({
+        success: false,
+        message: 'Set another session as current before archiving this one.'
+      });
+      return;
+    }
+
+    const updated = await prisma.academicYear.update({
+      where: { id },
+      data: {
+        isArchived: true,
+        archivedAt: new Date(),
+        archivedById: req.user?.id || null,
+        archivedByName: req.user?.fullName || 'Administrator'
+      }
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'ARCHIVE_ACADEMIC_SESSION',
+      module: 'ACADEMIC_YEARS',
+      recordId: id,
+      newData: {
+        sessionId: id,
+        name: session.name,
+        studentsCount: session._count.studentsAcademic,
+        paymentsCount: session._count.payments
+      },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `Academic session "${session.name}" has been successfully archived.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Unarchive an academic session (permission-controlled)
+export const unarchiveAcademicYear = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const session = await prisma.academicYear.findUnique({ where: { id } });
+
+    if (!session) {
+      res.status(404).json({ success: false, message: 'Academic session not found' });
+      return;
+    }
+
+    const updated = await prisma.academicYear.update({
+      where: { id },
+      data: {
+        isArchived: false,
+        archivedAt: null,
+        archivedById: null,
+        archivedByName: null
+      }
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'UNARCHIVE_ACADEMIC_SESSION',
+      module: 'ACADEMIC_YEARS',
+      recordId: id,
+      newData: { sessionId: id, name: session.name },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `Academic session "${session.name}" has been restored from archive.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get session details for archive confirmation modal (student & fee record counts)
+export const getSessionArchiveDetails = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const session = await prisma.academicYear.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            studentsAcademic: true,
+            feeStructures: true,
+            payments: true
+          }
+        }
+      }
+    });
+
+    if (!session) {
+      res.status(404).json({ success: false, message: 'Academic session not found' });
+      return;
+    }
+
+    // Count unpaid dues for this session
+    const unpaidDuesCount = await prisma.studentFee.count({
+      where: {
+        academicYearId: id,
+        remainingAmount: { gt: 0 }
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: session.id,
+        name: session.name,
+        isActive: session.isActive,
+        isArchived: session.isArchived,
+        studentCount: session._count.studentsAcademic,
+        feeStructureCount: session._count.feeStructures,
+        paymentCount: session._count.payments,
+        unpaidDuesCount,
+        archivedAt: session.archivedAt,
+        archivedByName: session.archivedByName
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Export Sessions list to CSV with UTF-8 BOM, escaped values, readable headers
+export const exportSessionsCsv = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const sessions = await prisma.academicYear.findMany({
+      orderBy: { startDate: 'desc' },
+      include: {
+        _count: {
+          select: {
+            studentsAcademic: true,
+            feeStructures: true,
+            payments: true
+          }
+        }
+      }
+    });
+
+    const headers = [
+      'Session Name',
+      'Start Date (DD-MM-YYYY)',
+      'End Date (DD-MM-YYYY)',
+      'Status',
+      'Admission Status',
+      'Enrolled Students',
+      'Target Capacity',
+      'Archive Status',
+      'Archived Date',
+      'Archived By'
+    ];
+
+    const formatDate = (d: Date | null | undefined): string => {
+      if (!d) return '';
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      const day = dt.getDate().toString().padStart(2, '0');
+      const month = (dt.getMonth() + 1).toString().padStart(2, '0');
+      const year = dt.getFullYear();
+      return `${day}-${month}-${year}`;
+    };
+
+    const escapeCsv = (val: any): string => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = sessions.map(s => [
+      escapeCsv(s.name),
+      escapeCsv(formatDate(s.startDate)),
+      escapeCsv(formatDate(s.endDate)),
+      escapeCsv(s.isActive ? 'CURRENT ACTIVE' : 'INACTIVE'),
+      escapeCsv(s.admissionStatus),
+      escapeCsv(s._count.studentsAcademic),
+      escapeCsv(s.targetEnrollment || 300),
+      escapeCsv(s.isArchived ? 'ARCHIVED' : 'ACTIVE'),
+      escapeCsv(formatDate(s.archivedAt)),
+      escapeCsv(s.archivedByName || '')
+    ]);
+
+    // Prepend UTF-8 BOM \uFEFF so Excel correctly opens unicode characters
+    const csvContent = '\uFEFF' + [headers.map(h => `"${h}"`).join(','), ...rows.map(r => r.join(','))].join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="PBPS_Academic_Sessions.csv"');
+    res.status(200).send(csvContent);
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -383,6 +383,37 @@ export const FeeCollectionModal: React.FC<FeeCollectionModalProps> = ({
               {/* Step 2: Payment Inputs */}
               {selectedStudent && (
                 <div className="space-y-4">
+                  {/* Itemized Pending Fee Schedule Table */}
+                  {selectedStudent.studentFees && selectedStudent.studentFees.length > 0 && (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden text-xs">
+                      <div className="bg-slate-800 text-white px-3 py-2 font-bold flex justify-between items-center text-[11px]">
+                        <span>Pending Fee Schedule Breakdown</span>
+                        <span className="text-slate-300 font-normal">
+                          {selectedStudent.isHostelStudent ? 'Hostel Student' : 'Day Scholar'}
+                        </span>
+                      </div>
+                      <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 bg-white">
+                        {selectedStudent.studentFees
+                          .filter((f: any) => Number(f.remainingAmount) > 0)
+                          .map((fee: any) => (
+                            <div key={fee.id} className="p-2 flex items-center justify-between hover:bg-slate-50">
+                              <div>
+                                <div className="font-semibold text-slate-800">{fee.title}</div>
+                                <div className="text-[10px] text-slate-400">
+                                  Due: {new Date(fee.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} · Net: ₹{Number(fee.netAmount).toLocaleString('en-IN')}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-mono font-bold text-rose-600">
+                                  ₹{Number(fee.remainingAmount).toLocaleString('en-IN')}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   {totalOutstanding <= 0 ? (
                     <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-center text-xs text-emerald-800 font-semibold">
                       This student has completely cleared all outstanding fees for the current session!

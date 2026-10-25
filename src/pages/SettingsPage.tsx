@@ -4,12 +4,25 @@ import {
   Building,
   Save,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Shield,
+  Download,
+  Upload,
+  Clock,
+  RotateCcw,
+  Sliders,
+  DollarSign,
+  FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '../api/client.js';
+import { useAuth } from '../contexts/AuthContext.js';
 
 export const SettingsPage: React.FC = () => {
+  const { user, hasPermission } = useAuth();
+  const [activeTab, setActiveTab] = useState<'profile' | 'audit' | 'backup'>('profile');
+
+  // Settings form state
   const [settings, setSettings] = useState<any>({
     schoolName: '',
     tagline: '',
@@ -21,20 +34,65 @@ export const SettingsPage: React.FC = () => {
     principalName: '',
     receiptFooter: '',
     authorizedSignatory: '',
-    currencySymbol: '₹'
+    currencySymbol: '₹',
+    receiptPrefix: 'PBPS',
+    lateFeeEnabled: false,
+    lateFeeType: 'FIXED',
+    lateFeeAmount: 50,
+    lateFeeGraceDays: 10,
+    requireDiscountApproval: true,
+    requireCustomFeeApproval: true,
   });
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  // Audit logs state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  // Backup & restore state
+  const [restoring, setRestoring] = useState(false);
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+
   useEffect(() => {
-    apiClient.get('/settings').then((res) => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await apiClient.get('/settings');
       if (res.data?.success && res.data?.data) {
         setSettings(res.data.data);
       }
-    }).catch(console.error).finally(() => setLoading(false));
-  }, []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      const res = await apiClient.get('/system/audit-logs');
+      if (res.data?.success) {
+        setAuditLogs(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load audit logs:', err);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'audit') {
+      fetchAuditLogs();
+    }
+  }, [activeTab]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,8 +101,8 @@ export const SettingsPage: React.FC = () => {
     try {
       const res = await apiClient.put('/settings', settings);
       if (res.data?.success) {
-        setSaveMessage('School details and receipt branding saved successfully!');
-        toast.success('School settings saved successfully');
+        setSaveMessage('School details and system parameters saved successfully!');
+        toast.success('Settings saved successfully');
         setTimeout(() => setSaveMessage(null), 3000);
       }
     } catch (err: any) {
@@ -54,176 +112,527 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleExportBackup = async () => {
+    try {
+      const res = await apiClient.get('/system/backup/export');
+      if (res.data?.success) {
+        const jsonStr = JSON.stringify(res.data.data, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `PBPS-Database-Backup-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success('Database backup exported and downloaded successfully');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to export backup');
+    }
+  };
+
+  const handleRestoreFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setRestoreFile(file);
+      setRestoreConfirmOpen(true);
+    }
+  };
+
+  const executeRestore = async () => {
+    if (!restoreFile) return;
+    setRestoring(true);
+    try {
+      const text = await restoreFile.text();
+      const backupData = JSON.parse(text);
+
+      const res = await apiClient.post('/system/backup/restore', { backupData });
+      if (res.data?.success) {
+        toast.success('Database restored successfully from backup archive!');
+        setRestoreConfirmOpen(false);
+        setRestoreFile(null);
+        fetchSettings();
+      } else {
+        toast.error(res.data?.message || 'Restore failed');
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to parse or restore backup file');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   if (loading) {
     return <div className="py-16 text-center text-xs text-slate-400">Loading school configuration...</div>;
   }
 
+  const isDirector = (user?.role as string) === 'SUPER_ADMIN' || (user?.role as string) === 'DIRECTOR';
+
   return (
-    <div className="space-y-4 sm:space-y-6 max-w-4xl mx-auto">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-          Institutional Profile & Receipt Branding
-        </h1>
-        <p className="text-xs text-slate-500 mt-0.5">
-          These details are automatically printed on official A4 fee receipts, tax summaries, and PDF documents.
-        </p>
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Title */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+            System Settings, Governance & Disaster Recovery
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Configure school profile, dynamic receipt prefix, late fee rules, audit trail, and one-click database backups.
+          </p>
+        </div>
+
+        {/* Tab Controls */}
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-200/70 border border-slate-300/60 w-full sm:w-auto overflow-x-auto whitespace-nowrap">
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              activeTab === 'profile'
+                ? 'bg-white text-indigo-700 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            School Branding & Fees
+          </button>
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              activeTab === 'audit'
+                ? 'bg-white text-indigo-700 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Audit Trail
+          </button>
+          {isDirector && (
+            <button
+              onClick={() => setActiveTab('backup')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'backup'
+                  ? 'bg-white text-indigo-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Backup & Recovery
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 md:p-8 shadow-2xs">
-        {saveMessage && (
-          <div className="mb-4 sm:mb-6 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 font-semibold">
-            <CheckCircle className="h-4 w-4 shrink-0" />
-            <span>{saveMessage}</span>
-          </div>
-        )}
+      {/* TAB 1: SCHOOL BRANDING & FEE PARAMETERS */}
+      {activeTab === 'profile' && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 md:p-8 shadow-2xs">
+          {saveMessage && (
+            <div className="mb-4 sm:mb-6 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 font-semibold">
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>{saveMessage}</span>
+            </div>
+          )}
 
-        <form onSubmit={handleSave} className="space-y-5 sm:space-y-6">
-          {/* General School Profile */}
-          <div className="space-y-4">
-            <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
-              <Building className="h-4 w-4 text-indigo-600 shrink-0" />
-              <span>School Identity & Location</span>
-            </h2>
+          <form onSubmit={handleSave} className="space-y-6">
+            {/* General Profile */}
+            <div className="space-y-4">
+              <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
+                <Building className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span>School Identity & Location</span>
+              </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Official School Name</label>
-                <input
-                  type="text"
-                  required
-                  value={settings.schoolName}
-                  onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs font-semibold min-h-[42px] sm:min-h-[auto]"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Official School Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={settings.schoolName}
+                    onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Motto / Tagline</label>
+                  <input
+                    type="text"
+                    value={settings.tagline || ''}
+                    onChange={(e) => setSettings({ ...settings, tagline: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Motto / Tagline</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Full Campus Address</label>
+                <textarea
+                  rows={2}
+                  value={settings.address}
+                  onChange={(e) => setSettings({ ...settings, address: e.target.value })}
+                  className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={settings.phone}
+                    onChange={(e) => setSettings({ ...settings, phone: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={settings.email}
+                    onChange={(e) => setSettings({ ...settings, email: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Affiliation / Reg #</label>
+                  <input
+                    type="text"
+                    value={settings.registrationNumber || ''}
+                    onChange={(e) => setSettings({ ...settings, registrationNumber: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Receipt Numbering & Prefix */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span>Receipt Numbering & Formatting</span>
+              </h2>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Receipt Number Prefix (Default: PBPS)
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.receiptPrefix || 'PBPS'}
+                    onChange={(e) => setSettings({ ...settings, receiptPrefix: e.target.value.toUpperCase() })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs font-mono font-bold"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">Format: PBPS-YYYY-0001</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Authorized Signatory Title</label>
+                  <input
+                    type="text"
+                    value={settings.authorizedSignatory || ''}
+                    onChange={(e) => setSettings({ ...settings, authorizedSignatory: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Currency Symbol</label>
+                  <input
+                    type="text"
+                    value={settings.currencySymbol || '₹'}
+                    onChange={(e) => setSettings({ ...settings, currencySymbol: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Receipt Footer Disclaimer</label>
                 <input
                   type="text"
-                  value={settings.tagline || ''}
-                  onChange={(e) => setSettings({ ...settings, tagline: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
+                  value={settings.receiptFooter || ''}
+                  onChange={(e) => setSettings({ ...settings, receiptFooter: e.target.value })}
+                  className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
                 />
               </div>
             </div>
 
+            {/* Late Fee Policy (SRS Section 5: Default is DISABLED) */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-indigo-600 shrink-0" />
+                  <span>Late Fee Rules & Overdue Penalties</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={settings.lateFeeEnabled || false}
+                    onChange={(e) => setSettings({ ...settings, lateFeeEnabled: e.target.checked })}
+                    className="h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500"
+                  />
+                  <span className="font-semibold text-slate-700">Enable Late Fee Penalty</span>
+                </label>
+              </h2>
+
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 text-xs">
+                <p className="text-[11px] text-slate-500 mb-3">
+                  Default status is <strong>DISABLED</strong>. When activated by the Director, penalty will apply after the grace period past due dates.
+                </p>
+
+                {settings.lateFeeEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 block mb-1">Penalty Mode</label>
+                      <select
+                        value={settings.lateFeeType || 'FIXED'}
+                        onChange={(e) => setSettings({ ...settings, lateFeeType: e.target.value })}
+                        className="w-full rounded-lg border border-slate-200 py-1.5 px-2 bg-white"
+                      >
+                        <option value="FIXED">Fixed Amount (₹)</option>
+                        <option value="PER_DAY">Per Day Overdue (₹/Day)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 block mb-1">Amount (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={settings.lateFeeAmount || 50}
+                        onChange={(e) => setSettings({ ...settings, lateFeeAmount: parseFloat(e.target.value) })}
+                        className="w-full rounded-lg border border-slate-200 py-1.5 px-2 bg-white font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 block mb-1">Grace Days</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={settings.lateFeeGraceDays || 10}
+                        onChange={(e) => setSettings({ ...settings, lateFeeGraceDays: parseInt(e.target.value, 10) })}
+                        className="w-full rounded-lg border border-slate-200 py-1.5 px-2 bg-white font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Approval Governance (SRS Section 9) */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
+                <Shield className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span>Approval Governance & Discretion</span>
+              </h2>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <label className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex items-start justify-between cursor-pointer">
+                  <div>
+                    <div className="font-bold text-slate-800">Require Director Approval for Discounts</div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Fee concessions applied by counter staff remain PENDING until approved.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.requireDiscountApproval ?? true}
+                    onChange={(e) => setSettings({ ...settings, requireDiscountApproval: e.target.checked })}
+                    className="h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 mt-0.5"
+                  />
+                </label>
+
+                <label className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex items-start justify-between cursor-pointer">
+                  <div>
+                    <div className="font-bold text-slate-800">Require Approval for Custom Admission Fees</div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Discretionary rates entered for unconfigured classes require Director confirmation.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.requireCustomFeeApproval ?? true}
+                    onChange={(e) => setSettings({ ...settings, requireCustomFeeApproval: e.target.checked })}
+                    className="h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 mt-0.5"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-slate-100">
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-xs"
+              >
+                <Save className="h-4 w-4" />
+                <span>{saving ? 'Saving Changes...' : 'Save Settings'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* TAB 2: AUDIT LOG (SRS Section 9: Who changed what and when) */}
+      {activeTab === 'audit' && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+          <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
             <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">Full Campus Address</label>
-              <textarea
-                rows={2}
-                value={settings.address}
-                onChange={(e) => setSettings({ ...settings, address: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs"
-              />
+              <h2 className="text-sm font-bold text-slate-900">Institutional Audit Trail</h2>
+              <p className="text-xs text-slate-500">
+                Immutable activity log for fee structure modifications, voided payments, user role changes, and authorizations.
+              </p>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">School Contact Phone</label>
-                <input
-                  type="text"
-                  value={settings.phone}
-                  onChange={(e) => setSettings({ ...settings, phone: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Finance / School Email</label>
-                <input
-                  type="email"
-                  value={settings.email}
-                  onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Website URL</label>
-                <input
-                  type="url"
-                  value={settings.website || ''}
-                  onChange={(e) => setSettings({ ...settings, website: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Receipt Customization */}
-          <div className="space-y-4 pt-4 border-t border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
-              Receipt & Regulatory Details
-            </h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Affiliation / Reg Number</label>
-                <input
-                  type="text"
-                  value={settings.registrationNumber || ''}
-                  onChange={(e) => setSettings({ ...settings, registrationNumber: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs font-mono min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Principal Name</label>
-                <input
-                  type="text"
-                  value={settings.principalName || ''}
-                  onChange={(e) => setSettings({ ...settings, principalName: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Authorized Signatory Title</label>
-                <input
-                  type="text"
-                  value={settings.authorizedSignatory || ''}
-                  onChange={(e) => setSettings({ ...settings, authorizedSignatory: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Currency Symbol</label>
-                <input
-                  type="text"
-                  value={settings.currencySymbol || '₹'}
-                  onChange={(e) => setSettings({ ...settings, currencySymbol: e.target.value })}
-                  className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs font-bold min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">Receipt Disclaimer / Footer</label>
-              <textarea
-                rows={2}
-                value={settings.receiptFooter || ''}
-                onChange={(e) => setSettings({ ...settings, receiptFooter: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 py-2 sm:py-1.5 px-3 text-xs"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-4">
             <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-xs w-full sm:w-auto min-h-[44px]"
+              onClick={fetchAuditLogs}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
             >
-              <Save className="h-4 w-4" />
-              <span>{saving ? 'Saving Changes...' : 'Save Settings'}</span>
+              Refresh Logs
             </button>
           </div>
-        </form>
-      </div>
+
+          {loadingLogs ? (
+            <div className="py-16 text-center text-xs text-slate-400 animate-pulse">Loading audit trail...</div>
+          ) : auditLogs.length === 0 ? (
+            <div className="py-16 text-center text-xs text-slate-500">No audit entries found.</div>
+          ) : (
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-xs text-left min-w-[700px]">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold text-[11px]">
+                  <tr>
+                    <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-4">Action</th>
+                    <th className="py-3 px-4">Target Resource</th>
+                    <th className="py-3 px-4">Officer / User</th>
+                    <th className="py-3 px-4">IP Address</th>
+                    <th className="py-3 px-4">Audit Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {auditLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50/70">
+                      <td className="py-2.5 px-4 text-slate-600 font-mono text-[11px]">
+                        {new Date(log.createdAt).toLocaleString('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">{log.action}</td>
+                      <td className="py-2.5 px-4 text-slate-700">{log.resource}</td>
+                      <td className="py-2.5 px-4 font-semibold text-indigo-700">
+                        {log.user?.fullName || log.userId || 'System'}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-[11px] text-slate-400">{log.ipAddress || 'Internal'}</td>
+                      <td className="py-2.5 px-4 text-slate-600 text-[11px] max-w-xs truncate" title={log.details}>
+                        {log.details || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: BACKUP AND RESTORE (SRS Section 9: Director only) */}
+      {activeTab === 'backup' && isDirector && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs space-y-4">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Download className="h-4 w-4 text-indigo-600" />
+                  <span>One-Click Database Export & Backup</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Download a full point-in-time JSON archive of student profiles, fee structures, payments, receipts, and permissions.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700 shadow-xs cursor-pointer"
+              >
+                <Download className="h-4 w-4" />
+                <span>Export & Download Backup</span>
+              </button>
+            </div>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600">
+              Archived records are encrypted in transit and saved directly to your local workstation. Maintain regular weekly backups.
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/20 p-6 shadow-2xs space-y-4">
+            <div className="pb-3 border-b border-rose-100">
+              <h2 className="text-sm font-bold text-rose-900 flex items-center gap-2">
+                <Upload className="h-4 w-4 text-rose-600" />
+                <span>Disaster Recovery: Restore Database Archive</span>
+              </h2>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Upload a previously downloaded PBPS backup JSON archive to recover or roll back database records.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-white rounded-xl border border-slate-200">
+              <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs">
+                <Upload className="h-4 w-4 text-slate-500" />
+                <span>Select Backup JSON Archive</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={handleRestoreFileSelected}
+                />
+              </label>
+              <span className="text-xs text-slate-500">
+                Supported format: UTF-8 PBPS Database Archive JSON
+              </span>
+            </div>
+          </div>
+
+          {/* Restore Confirmation Modal */}
+          {restoreConfirmOpen && (
+            <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+              <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center gap-2 text-rose-600 font-bold text-sm pb-2 border-b border-slate-100">
+                  <AlertCircle className="h-5 w-5" />
+                  <span>Confirm Database Restoration</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  You are about to restore database records from <strong>"{restoreFile?.name}"</strong>. This will reconcile existing fee structures, student ledgers, and transactions.
+                </p>
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                  Make sure you have downloaded a current backup before executing a restore.
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRestoreConfirmOpen(false);
+                      setRestoreFile(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={restoring}
+                    onClick={executeRestore}
+                    className="px-4 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50"
+                  >
+                    {restoring ? 'Restoring Database...' : 'Confirm & Execute Restore'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

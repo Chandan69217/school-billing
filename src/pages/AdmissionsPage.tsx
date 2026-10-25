@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   User,
@@ -22,7 +22,12 @@ import {
   Download,
   Trash2,
   ExternalLink,
-  Loader2
+  Loader2,
+  Image as ImageIcon,
+  Camera,
+  RefreshCw,
+  HelpCircle,
+  Award
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { apiClient } from '../api/client.js';
@@ -30,6 +35,8 @@ import { SessionManagerTab } from '../components/admissions/SessionManagerTab.js
 import { SessionRegisterTab } from '../components/admissions/SessionRegisterTab.js';
 import { SessionPromotionTab } from '../components/admissions/SessionPromotionTab.js';
 import { CreateEditSessionModal } from '../components/admissions/CreateEditSessionModal.js';
+import { SLCModal } from '../components/admissions/SLCModal.js';
+import { formatAadhaar, validateAadhaar } from '../utils/verhoeff.js';
 import { toast } from 'sonner';
 
 interface AdmissionsPageProps {
@@ -74,6 +81,10 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
   const [sessionToEdit, setSessionToEdit] = useState<any | null>(null);
   const [selectedSessionForRegister, setSelectedSessionForRegister] = useState<string>('');
 
+  // SLC Modal state for viewing generated certificate
+  const [slcModalOpen, setSlcModalOpen] = useState(false);
+  const [currentSlc, setCurrentSlc] = useState<any | null>(null);
+
   // Step 1: Student Information
   const [studentInfo, setStudentInfo] = useState({
     firstName: '',
@@ -86,18 +97,35 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     nationality: 'Indian',
     religion: 'Hindu',
     category: 'General',
+    // Residence (Permanent) Address
     address: '',
-    city: 'Bangalore',
-    state: 'Karnataka',
-    pincode: '560001',
+    city: 'Patna',
+    state: 'Bihar',
+    pincode: '800001',
+    // Present Address (Part B3)
+    sameAsResidence: true,
+    presentAddress: '',
+    presentCity: 'Patna',
+    presentState: 'Bihar',
+    presentPincode: '800001',
     emergencyPhone: '',
-    photoUrl: ''
+    photoUrl: '',
+    isHostelStudent: false,
+    hostelRoomNumber: '',
+    hostelAdmissionDate: new Date().toISOString().split('T')[0]
   });
 
-  // Step 2: Parent/Guardian
+  // Photo upload states
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  // Step 2: Parent/Guardian (Part B2)
   const [parentInfo, setParentInfo] = useState({
     fatherName: '',
+    fatherAadhaarNumber: '',
     motherName: '',
+    motherAadhaarNumber: '',
     guardianName: '',
     primaryPhone: '',
     alternatePhone: '',
@@ -108,16 +136,49 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     address: ''
   });
 
-  // Step 3: Academic Information
+  // Step 3: Academic Information (Part B4)
   const [academicInfo, setAcademicInfo] = useState({
     admissionNumber: '',
     academicYearId: '',
     classId: '',
     sectionId: '',
     admissionDate: new Date().toISOString().split('T')[0],
-    previousSchool: '',
-    previousClass: '',
-    rollNumber: ''
+    rollNumber: '',
+    isNonAttending: false,
+    // Previous school details toggle & fields
+    isPreviouslyEnrolled: false,
+    previousSchoolName: '',
+    previousClassPassed: 'Class 4',
+    previousMedium: 'English',
+    previousMediumOther: '',
+    previousLeavingDate: '',
+    previousTcNumber: '',
+    previousTcDate: ''
+  });
+
+  // Discretionary custom fee
+  const [customFeeInfo, setCustomFeeInfo] = useState({
+    amount: '',
+    feeHeadName: 'Discretionary Admission Fee',
+    reason: ''
+  });
+
+  // Live admission quote bill
+  const [admissionQuote, setAdmissionQuote] = useState<{
+    items: Array<{ feeHead: string; component?: string; amount: number; frequency: string }>;
+    totalAmount: number;
+    hasConfiguredFee: boolean;
+    note?: string;
+  } | null>(null);
+  const [loadingQuote, setLoadingQuote] = useState(false);
+
+  // Immediate payment collection option on admission
+  const [collectPaymentNow, setCollectPaymentNow] = useState(false);
+  const [immediatePayment, setImmediatePayment] = useState({
+    amount: '',
+    paymentMethod: 'CASH',
+    transactionRef: '',
+    notes: 'Admission first fee collection'
   });
 
   // Step 4: Documents Upload
@@ -131,10 +192,110 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
   const [uploadingDocIdx, setUploadingDocIdx] = useState<number | null>(null);
   const [customDocTitle, setCustomDocTitle] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [topErrorMessage, setTopErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [admissionSuccess, setAdmissionSuccess] = useState<any | null>(null);
 
-  // File Upload Handler
+  // Clear a specific field error as user types (Part C1)
+  const clearFieldError = (fieldName: string) => {
+    if (fieldErrors[fieldName]) {
+      setFieldErrors(prev => {
+        const next = { ...prev };
+        delete next[fieldName];
+        return next;
+      });
+    }
+    if (topErrorMessage) setTopErrorMessage(null);
+  };
+
+  // Student Photo Upload Handler (Part B1)
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoError(null);
+    clearFieldError('photoUrl');
+
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png'];
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!allowedMimes.includes(file.type.toLowerCase()) && !['jpg', 'jpeg', 'png'].includes(ext || '')) {
+      setPhotoError('Invalid image type. Accepted formats are JPG, JPEG, and PNG.');
+      return;
+    }
+
+    // Client-side 200 KB limit validation
+    if (file.size > 200 * 1024) {
+      setPhotoError(`Photo must be less than 200 KB (selected: ${(file.size / 1024).toFixed(1)} KB).`);
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      const formData = new FormData();
+      formData.append('photo', file);
+
+      const res = await apiClient.post('/admissions/upload-photo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data?.success) {
+        setStudentInfo(prev => ({ ...prev, photoUrl: res.data.data.photoUrl }));
+        toast.success('Student photograph uploaded and verified successfully.');
+      } else {
+        setPhotoError(res.data?.message || 'Failed to upload photo.');
+      }
+    } catch (err: any) {
+      setPhotoError(err.response?.data?.message || 'Photo upload failed. Magic bytes check error.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setStudentInfo(prev => ({ ...prev, photoUrl: '' }));
+    setPhotoError(null);
+    if (photoInputRef.current) photoInputRef.current.value = '';
+  };
+
+  // Sync residence address to present address if sameAsResidence is true (Part B3)
+  const handleResidenceAddressChange = (key: 'address' | 'city' | 'state' | 'pincode', val: string) => {
+    setStudentInfo(prev => {
+      const updated = { ...prev, [key]: val };
+      if (prev.sameAsResidence) {
+        if (key === 'address') updated.presentAddress = val;
+        if (key === 'city') updated.presentCity = val;
+        if (key === 'state') updated.presentState = val;
+        if (key === 'pincode') updated.presentPincode = val;
+      }
+      return updated;
+    });
+    clearFieldError(key);
+  };
+
+  const handleToggleSameAsResidence = (checked: boolean) => {
+    setStudentInfo(prev => {
+      if (checked) {
+        return {
+          ...prev,
+          sameAsResidence: true,
+          presentAddress: prev.address,
+          presentCity: prev.city,
+          presentState: prev.state,
+          presentPincode: prev.pincode
+        };
+      } else {
+        return {
+          ...prev,
+          sameAsResidence: false,
+          presentAddress: '',
+          presentCity: '',
+          presentState: '',
+          presentPincode: ''
+        };
+      }
+    });
+  };
+
+  // Document upload handler
   const handleFileUpload = async (idx: number, file: File) => {
     if (!file) return;
     setUploadingDocIdx(idx);
@@ -186,7 +347,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
 
   const handleAddCustomDoc = () => {
     if (!customDocTitle.trim()) return;
-    const docType = customDocTitle.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const docType = customDocTitle.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
     setDocuments(prev => [
       ...prev,
       {
@@ -200,17 +361,21 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     setCustomDocTitle('');
   };
 
-  // Fetch classes and academic years
+  // Fetch classes and academic years (includeArchived for SessionManager, but filter active for admission dropdown)
   const fetchMetadata = async () => {
     try {
       const [yearsRes, classesRes] = await Promise.all([
-        apiClient.get('/academic-years'),
+        apiClient.get('/academic-years?includeArchived=true'),
         apiClient.get('/classes')
       ]);
 
       if (yearsRes.data?.success) {
-        setAcademicYears(yearsRes.data.data);
-        const activeYear = yearsRes.data.data.find((y: any) => y.isActive) || yearsRes.data.data[0];
+        const allSessions = yearsRes.data.data;
+        setAcademicYears(allSessions);
+
+        // Pick active session for admissions (Part A2)
+        const unarchived = allSessions.filter((y: any) => !y.isArchived);
+        const activeYear = unarchived.find((y: any) => y.isActive) || unarchived[0];
         if (activeYear) {
           setAcademicInfo(prev => ({
             ...prev,
@@ -264,71 +429,273 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     }
   }, [academicInfo.classId, academicInfo.academicYearId, classes]);
 
+  // Fetch live admission quote bill from Director's configured fee structure
+  const fetchAdmissionQuote = async () => {
+    if (!academicInfo.classId || !academicInfo.academicYearId) return;
+    setLoadingQuote(true);
+    try {
+      const monthNum = academicInfo.admissionDate
+        ? new Date(academicInfo.admissionDate).getMonth() + 1
+        : new Date().getMonth() + 1;
+
+      const res = await apiClient.post('/fees/admission-bill', {
+        classId: academicInfo.classId,
+        academicYearId: academicInfo.academicYearId,
+        isHostelStudent: studentInfo.isHostelStudent,
+        admissionMonth: monthNum
+      });
+
+      if (res.data?.success) {
+        setAdmissionQuote(res.data.data);
+        if (res.data.data.totalAmount > 0 && !immediatePayment.amount) {
+          setImmediatePayment(prev => ({
+            ...prev,
+            amount: res.data.data.totalAmount.toString()
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching admission bill quote:', err);
+    } finally {
+      setLoadingQuote(false);
+    }
+  };
+
+  useEffect(() => {
+    if (academicInfo.classId && academicInfo.academicYearId) {
+      fetchAdmissionQuote();
+    }
+  }, [academicInfo.classId, academicInfo.academicYearId, studentInfo.isHostelStudent, academicInfo.admissionDate]);
+
   const selectedSession = academicYears.find(y => y.id === academicInfo.academicYearId);
 
+  // Filtered unarchived sessions for admission dropdown (Part A2)
+  const activeUnarchivedSessions = academicYears.filter(y => !y.isArchived);
+
+  // Form Validation per step (Part C1)
   const validateStep = (step: number): boolean => {
-    setErrorMessage(null);
+    const errors: Record<string, string> = {};
+
     if (step === 1) {
-      if (!studentInfo.firstName.trim() || !studentInfo.lastName.trim() || !studentInfo.dateOfBirth) {
-        setErrorMessage('Student first name, last name, and date of birth are required.');
-        return false;
+      if (!studentInfo.firstName.trim()) {
+        errors.firstName = 'First name is required.';
+      } else if (!/^[A-Za-z\s.'-]+$/.test(studentInfo.firstName.trim()) || studentInfo.firstName.trim().length < 2) {
+        errors.firstName = 'First name must contain at least 2 alphabetic characters.';
+      }
+
+      if (!studentInfo.lastName.trim()) {
+        errors.lastName = 'Last name is required.';
+      } else if (!/^[A-Za-z\s.'-]+$/.test(studentInfo.lastName.trim()) || studentInfo.lastName.trim().length < 2) {
+        errors.lastName = 'Last name must contain at least 2 alphabetic characters.';
+      }
+
+      if (!studentInfo.dateOfBirth) {
+        errors.dateOfBirth = 'Date of birth is required.';
+      } else {
+        const dob = new Date(studentInfo.dateOfBirth);
+        const today = new Date();
+        if (isNaN(dob.getTime())) {
+          errors.dateOfBirth = 'Invalid date of birth.';
+        } else if (dob >= today) {
+          errors.dateOfBirth = 'Date of birth cannot be today or in the future.';
+        } else {
+          const age = (today.getTime() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+          if (age < 2.5 || age > 25) {
+            errors.dateOfBirth = 'Student age must be between 3 and 25 years for standard school enrollment.';
+          }
+        }
+      }
+
+      if (studentInfo.aadhaarNumber) {
+        const valRes = validateAadhaar(studentInfo.aadhaarNumber);
+        if (!valRes.valid) {
+          errors.aadhaarNumber = valRes.message || 'Invalid student Aadhaar number.';
+        }
       }
     } else if (step === 2) {
       if (!parentInfo.primaryPhone.trim()) {
-        setErrorMessage('Parent primary mobile phone number is required for communications.');
-        return false;
+        errors.primaryPhone = 'Parent mobile phone number is required.';
+      } else if (!/^[6-9]\d{9}$/.test(parentInfo.primaryPhone.replace(/[\s-]/g, ''))) {
+        errors.primaryPhone = 'Phone number must be a valid 10-digit Indian mobile number starting with 6-9.';
       }
+
       if (!parentInfo.fatherName.trim() && !parentInfo.motherName.trim() && !parentInfo.guardianName.trim()) {
-        setErrorMessage('Please provide at least Father, Mother, or Guardian name.');
-        return false;
+        errors.parentName = 'Please provide at least Father, Mother, or Guardian full name.';
+      }
+
+      if (parentInfo.email && parentInfo.email.trim()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentInfo.email.trim())) {
+          errors.email = 'Invalid email address format.';
+        }
+      }
+
+      // Parents' Aadhaar Validation (Part B2)
+      if (parentInfo.fatherAadhaarNumber) {
+        const valRes = validateAadhaar(parentInfo.fatherAadhaarNumber);
+        if (!valRes.valid) {
+          errors.fatherAadhaarNumber = valRes.message || 'Invalid Father\'s Aadhaar number.';
+        }
+      }
+
+      if (parentInfo.motherAadhaarNumber) {
+        const valRes = validateAadhaar(parentInfo.motherAadhaarNumber);
+        if (!valRes.valid) {
+          errors.motherAadhaarNumber = valRes.message || 'Invalid Mother\'s Aadhaar number.';
+        }
       }
     } else if (step === 3) {
-      if (!academicInfo.academicYearId || !academicInfo.classId) {
-        setErrorMessage('Please select Academic Session and Class.');
-        return false;
+      if (!academicInfo.academicYearId) {
+        errors.academicYearId = 'Academic Session is required.';
+      } else if (selectedSession?.isArchived) {
+        errors.academicYearId = `Session "${selectedSession.name}" is archived. Please select an active session.`;
+      } else if (selectedSession?.admissionStatus === 'CLOSED') {
+        errors.academicYearId = `Admissions are currently marked CLOSED for Session "${selectedSession.name}".`;
       }
-      if (selectedSession && selectedSession.admissionStatus === 'CLOSED') {
-        setErrorMessage(`Admissions are marked CLOSED for Academic Session "${selectedSession.name}". Please choose an active session or reopen admissions in the Session Manager.`);
-        return false;
+
+      if (!academicInfo.classId) {
+        errors.classId = 'Admitting Class is required.';
+      }
+
+      // Previous School Details validation (Part B4)
+      if (academicInfo.isPreviouslyEnrolled) {
+        if (!academicInfo.previousSchoolName.trim()) {
+          errors.previousSchoolName = 'Previous school name is required for transfer students.';
+        }
+        if (!academicInfo.previousClassPassed.trim()) {
+          errors.previousClassPassed = 'Class passed at previous school is required.';
+        }
+        if (!academicInfo.previousMedium.trim()) {
+          errors.previousMedium = 'Medium of instruction is required.';
+        } else if (academicInfo.previousMedium === 'Other' && !academicInfo.previousMediumOther.trim()) {
+          errors.previousMediumOther = 'Please specify the medium of instruction.';
+        }
+        if (!academicInfo.previousLeavingDate) {
+          errors.previousLeavingDate = 'Date of leaving previous school is required.';
+        } else {
+          const lDate = new Date(academicInfo.previousLeavingDate);
+          const admDate = new Date(academicInfo.admissionDate || new Date());
+          const today = new Date();
+          if (isNaN(lDate.getTime())) {
+            errors.previousLeavingDate = 'Invalid date of leaving previous school.';
+          } else if (lDate > today) {
+            errors.previousLeavingDate = 'Leaving date cannot be in the future.';
+          } else if (lDate > admDate) {
+            errors.previousLeavingDate = 'Leaving date cannot be after admission date.';
+          }
+        }
       }
     }
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      const firstField = Object.keys(errors)[0];
+      setTopErrorMessage(Object.values(errors)[0]);
+
+      // Scroll to and focus the first invalid field (Part C1)
+      setTimeout(() => {
+        const el = document.getElementById(firstField) || document.querySelector(`[name="${firstField}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          (el as HTMLElement).focus?.();
+        }
+      }, 50);
+
+      return false;
+    }
+
+    setTopErrorMessage(null);
     return true;
   };
 
   const handleNext = () => {
     if (validateStep(currentStep)) {
+      if (currentStep === 4) {
+        fetchAdmissionQuote();
+      }
       setCurrentStep(prev => prev + 1);
     }
   };
 
   const handlePrevious = () => {
-    setErrorMessage(null);
+    setTopErrorMessage(null);
     setCurrentStep(prev => prev - 1);
   };
 
   const handleSubmitAdmission = async () => {
-    if (!validateStep(1) || !validateStep(2) || !validateStep(3)) return;
+    if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
+      // Jump to step with errors
+      if (!validateStep(1)) setCurrentStep(1);
+      else if (!validateStep(2)) setCurrentStep(2);
+      else if (!validateStep(3)) setCurrentStep(3);
+      return;
+    }
 
     setSubmitting(true);
-    setErrorMessage(null);
+    setTopErrorMessage(null);
 
     try {
-      const res = await apiClient.post('/admissions', {
-        studentInfo,
-        parentInfo,
-        academicInfo,
+      const finalMedium = academicInfo.previousMedium === 'Other'
+        ? academicInfo.previousMediumOther.trim()
+        : academicInfo.previousMedium;
+
+      const payload: any = {
+        studentInfo: {
+          ...studentInfo,
+          // include parent aadhaar reference in student info for convenience
+          fatherAadhaarNumber: parentInfo.fatherAadhaarNumber || undefined,
+          motherAadhaarNumber: parentInfo.motherAadhaarNumber || undefined,
+          isPreviouslyEnrolled: academicInfo.isPreviouslyEnrolled,
+          previousSchoolName: academicInfo.isPreviouslyEnrolled ? academicInfo.previousSchoolName : undefined,
+          previousClassPassed: academicInfo.isPreviouslyEnrolled ? academicInfo.previousClassPassed : undefined,
+          previousMedium: academicInfo.isPreviouslyEnrolled ? finalMedium : undefined,
+          previousLeavingDate: academicInfo.isPreviouslyEnrolled ? academicInfo.previousLeavingDate : undefined,
+          previousTcNumber: academicInfo.isPreviouslyEnrolled ? academicInfo.previousTcNumber : undefined,
+          previousTcDate: academicInfo.isPreviouslyEnrolled ? academicInfo.previousTcDate : undefined
+        },
+        parentInfo: {
+          ...parentInfo
+        },
+        academicInfo: {
+          ...academicInfo,
+          previousSchool: academicInfo.isPreviouslyEnrolled ? academicInfo.previousSchoolName : undefined,
+          previousClass: academicInfo.isPreviouslyEnrolled ? academicInfo.previousClassPassed : undefined
+        },
         documents: documents.filter(d => d.uploaded)
-      });
+      };
+
+      if (customFeeInfo.amount) {
+        payload.customFeeInfo = {
+          amount: parseFloat(customFeeInfo.amount),
+          feeHeadName: customFeeInfo.feeHeadName || 'Discretionary Admission Fee',
+          reason: customFeeInfo.reason || 'Admission fee discretionary'
+        };
+      }
+
+      if (collectPaymentNow && immediatePayment.amount && parseFloat(immediatePayment.amount) > 0) {
+        payload.paymentInfo = {
+          amount: parseFloat(immediatePayment.amount),
+          paymentMethod: immediatePayment.paymentMethod,
+          transactionRef: immediatePayment.transactionRef.trim() || undefined,
+          notes: immediatePayment.notes.trim() || undefined
+        };
+      }
+
+      const res = await apiClient.post('/admissions', payload);
 
       if (res.data?.success) {
         setAdmissionSuccess(res.data.data);
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-        fetchMetadata(); // update enrollment stats
+        fetchMetadata();
       } else {
-        setErrorMessage(res.data?.message || 'Admission failed');
+        setTopErrorMessage(res.data?.message || 'Admission registration failed');
       }
     } catch (err: any) {
-      setErrorMessage(err.response?.data?.message || err.message || 'Admission failed');
+      const respData = err.response?.data;
+      if (respData?.errors) {
+        setFieldErrors(respData.errors);
+      }
+      setTopErrorMessage(respData?.message || err.message || 'Admission registration failed');
     } finally {
       setSubmitting(false);
     }
@@ -351,7 +718,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
             Student Admissions & Academic Session Hub
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage academic intake sessions, multi-step student enrollment, cohort registers, and class rollovers.
+            Manage academic intake sessions, student admission lifecycle, cohort registers, and class rollovers.
           </p>
         </div>
 
@@ -404,8 +771,8 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Rollover / Promote</span>
+            <Layers className="h-3.5 w-3.5" />
+            <span>Session Promotion</span>
           </button>
         </div>
       </div>
@@ -415,13 +782,13 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
         <div className="max-w-4xl mx-auto">
           {admissionSuccess ? (
             /* Success Screen */
-            <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xs text-center">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 mb-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xs text-center space-y-4">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 mb-2">
                 <CheckCircle className="h-10 w-10" />
               </div>
               <h2 className="text-xl font-bold text-slate-900">Student Admission Completed!</h2>
-              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                The student has been enrolled for Session <strong>{admissionSuccess.sessionName || selectedSession?.name}</strong> in MySQL, academic cohort linked, and fee schedule initialized.
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                The student has been enrolled for Session <strong>{admissionSuccess.sessionName || selectedSession?.name}</strong>, academic cohort assigned, and initial fee schedule generated.
               </p>
 
               {/* Admission ID Badge */}
@@ -459,6 +826,23 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                     <div className="font-medium text-slate-800">{academicInfo.admissionDate}</div>
                   </div>
                 </div>
+
+                {admissionSuccess.receiptId && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900 flex items-center justify-between">
+                    <div>
+                      <span className="font-bold">Initial Fee Payment Recorded:</span> Receipt #{admissionSuccess.receiptNumber}
+                    </div>
+                    <a
+                      href={`/api/receipts/${admissionSuccess.receiptId}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-700 text-white font-semibold text-xs hover:bg-emerald-800"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download Receipt</span>
+                    </a>
+                  </div>
+                )}
               </div>
 
               {/* Next Action Buttons */}
@@ -473,13 +857,15 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                   <span>Download Admission Slip (PDF)</span>
                 </a>
 
-                <button
-                  onClick={() => onOpenFeeCollectionForStudent(admissionSuccess.studentId)}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs transition-colors"
-                >
-                  <CreditCard className="h-4 w-4" />
-                  <span>Collect Initial Fee</span>
-                </button>
+                {!admissionSuccess.receiptId && (
+                  <button
+                    onClick={() => onOpenFeeCollectionForStudent(admissionSuccess.studentId)}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs transition-colors"
+                  >
+                    <CreditCard className="h-4 w-4" />
+                    <span>Collect Initial Fee</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -515,15 +901,25 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       religion: 'Hindu',
                       category: 'General',
                       address: '',
-                      city: 'Bangalore',
-                      state: 'Karnataka',
-                      pincode: '560001',
+                      city: 'Patna',
+                      state: 'Bihar',
+                      pincode: '800001',
+                      sameAsResidence: true,
+                      presentAddress: '',
+                      presentCity: 'Patna',
+                      presentState: 'Bihar',
+                      presentPincode: '800001',
                       emergencyPhone: '',
-                      photoUrl: ''
+                      photoUrl: '',
+                      isHostelStudent: false,
+                      hostelRoomNumber: '',
+                      hostelAdmissionDate: new Date().toISOString().split('T')[0]
                     });
                     setParentInfo({
                       fatherName: '',
+                      fatherAadhaarNumber: '',
                       motherName: '',
+                      motherAadhaarNumber: '',
                       guardianName: '',
                       primaryPhone: '',
                       alternatePhone: '',
@@ -543,7 +939,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
           ) : (
             /* Wizard Card */
             <div className="rounded-2xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
-              {/* Stepper Header: Mobile Step X of Y, Desktop 5 nodes */}
+              {/* Stepper Header */}
               <div className="border-b border-slate-200 bg-slate-50/70 px-4 sm:px-6 py-4">
                 {/* Mobile Stepper */}
                 <div className="sm:hidden flex items-center justify-between">
@@ -603,36 +999,121 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                 </div>
               </div>
 
-              {/* Error Banner */}
-              {errorMessage && (
+              {/* Error Banner / Summary at top (Part C1) */}
+              {topErrorMessage && (
                 <div className="m-4 sm:m-6 mb-0 flex items-center gap-2 rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{errorMessage}</span>
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span className="font-semibold">{topErrorMessage}</span>
                 </div>
               )}
 
               {/* Form Step Content */}
               <div className="p-4 sm:p-6 md:p-8">
-                {/* Step 1: Student Information */}
+                {/* ============================================================== */}
+                {/* STEP 1: Student Information with Photo Upload & Present Address */}
+                {/* ============================================================== */}
                 {currentStep === 1 && (
-                  <div className="space-y-4">
-                    <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
-                      Step 1: Student Personal Details
-                    </h2>
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-sm font-bold text-slate-900">
+                          Step 1: Student Personal Details & Photograph
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Mandatory fields marked with red asterisk (<span className="text-rose-500 font-bold">*</span>).
+                        </p>
+                      </div>
+                    </div>
 
+                    {/* Part B1: Student Photograph Upload */}
+                    <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row items-center gap-4">
+                      <div className="relative h-24 w-24 rounded-xl border-2 border-dashed border-slate-300 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+                        {studentInfo.photoUrl ? (
+                          <img
+                            src={studentInfo.photoUrl}
+                            alt="Student Preview"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center text-slate-400 p-2 text-center">
+                            <Camera className="h-6 w-6 mb-1 text-slate-300" />
+                            <span className="text-[10px] font-semibold leading-tight">No Photo</span>
+                          </div>
+                        )}
+                        {uploadingPhoto && (
+                          <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
+                            <Loader2 className="h-6 w-6 text-indigo-600 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5 text-center sm:text-left flex-1">
+                        <div className="flex items-center gap-2 justify-center sm:justify-start">
+                          <span className="text-xs font-bold text-slate-800">Student Photograph</span>
+                          <span className="text-[10px] text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 font-medium">
+                            JPG, JPEG, PNG (Max 200 KB)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Uploaded photo is securely verified via magic bytes and appears on student ID, profile, and leaving certificate (SLC).
+                        </p>
+
+                        <div className="flex items-center gap-2 justify-center sm:justify-start pt-1">
+                          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors shadow-2xs cursor-pointer">
+                            <Upload className="h-3.5 w-3.5" />
+                            <span>{studentInfo.photoUrl ? 'Replace Photo' : 'Upload Photo'}</span>
+                            <input
+                              ref={photoInputRef}
+                              type="file"
+                              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                              className="hidden"
+                              onChange={handlePhotoUpload}
+                              disabled={uploadingPhoto}
+                            />
+                          </label>
+
+                          {studentInfo.photoUrl && (
+                            <button
+                              type="button"
+                              onClick={handleRemovePhoto}
+                              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+
+                        {photoError && (
+                          <p className="text-xs font-semibold text-rose-600 pt-1">{photoError}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Name Fields */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          First Name <span className="text-rose-500">*</span>
+                          First Name <span className="text-rose-500 font-bold">*</span>
                         </label>
                         <input
+                          id="firstName"
+                          name="firstName"
                           type="text"
-                          required
                           placeholder="e.g. Aarav"
                           value={studentInfo.firstName}
-                          onChange={(e) => setStudentInfo({ ...studentInfo, firstName: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          onChange={(e) => {
+                            setStudentInfo({ ...studentInfo, firstName: e.target.value });
+                            clearFieldError('firstName');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs transition-colors focus:outline-hidden ${
+                            fieldErrors.firstName
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                          }`}
                         />
+                        {fieldErrors.firstName && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.firstName}</p>
+                        )}
                       </div>
 
                       <div>
@@ -642,45 +1123,71 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           placeholder="e.g. Kumar"
                           value={studentInfo.middleName}
                           onChange={(e) => setStudentInfo({ ...studentInfo, middleName: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
                         />
                       </div>
 
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          Last Name <span className="text-rose-500">*</span>
+                          Last Name <span className="text-rose-500 font-bold">*</span>
                         </label>
                         <input
+                          id="lastName"
+                          name="lastName"
                           type="text"
-                          required
                           placeholder="e.g. Sharma"
                           value={studentInfo.lastName}
-                          onChange={(e) => setStudentInfo({ ...studentInfo, lastName: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          onChange={(e) => {
+                            setStudentInfo({ ...studentInfo, lastName: e.target.value });
+                            clearFieldError('lastName');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs transition-colors focus:outline-hidden ${
+                            fieldErrors.lastName
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                          }`}
                         />
+                        {fieldErrors.lastName && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.lastName}</p>
+                        )}
                       </div>
                     </div>
 
+                    {/* DOB, Gender, Blood Group, Aadhaar */}
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          Date of Birth <span className="text-rose-500">*</span>
+                          Date of Birth <span className="text-rose-500 font-bold">*</span>
                         </label>
                         <input
+                          id="dateOfBirth"
+                          name="dateOfBirth"
                           type="date"
-                          required
                           value={studentInfo.dateOfBirth}
-                          onChange={(e) => setStudentInfo({ ...studentInfo, dateOfBirth: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          max={new Date().toISOString().split('T')[0]}
+                          onChange={(e) => {
+                            setStudentInfo({ ...studentInfo, dateOfBirth: e.target.value });
+                            clearFieldError('dateOfBirth');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs transition-colors focus:outline-hidden ${
+                            fieldErrors.dateOfBirth
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                          }`}
                         />
+                        {fieldErrors.dateOfBirth && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.dateOfBirth}</p>
+                        )}
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Gender</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Gender <span className="text-rose-500 font-bold">*</span>
+                        </label>
                         <select
                           value={studentInfo.gender}
                           onChange={(e) => setStudentInfo({ ...studentInfo, gender: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 bg-white"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-indigo-500 focus:outline-hidden"
                         >
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
@@ -693,7 +1200,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                         <select
                           value={studentInfo.bloodGroup}
                           onChange={(e) => setStudentInfo({ ...studentInfo, bloodGroup: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 bg-white"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-indigo-500 focus:outline-hidden"
                         >
                           {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
                             <option key={bg} value={bg}>{bg}</option>
@@ -702,17 +1209,34 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Aadhaar / National ID</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Student Aadhaar No. (Optional)
+                        </label>
                         <input
+                          id="aadhaarNumber"
+                          name="aadhaarNumber"
                           type="text"
-                          placeholder="e.g. 7482-9102-3841"
-                          value={studentInfo.aadhaarNumber}
-                          onChange={(e) => setStudentInfo({ ...studentInfo, aadhaarNumber: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          placeholder="e.g. 7482 9102 3841"
+                          maxLength={14}
+                          value={formatAadhaar(studentInfo.aadhaarNumber)}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '').slice(0, 12);
+                            setStudentInfo({ ...studentInfo, aadhaarNumber: raw });
+                            clearFieldError('aadhaarNumber');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs font-mono transition-colors focus:outline-hidden ${
+                            fieldErrors.aadhaarNumber
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                          }`}
                         />
+                        {fieldErrors.aadhaarNumber && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.aadhaarNumber}</p>
+                        )}
                       </div>
                     </div>
 
+                    {/* Nationality, Religion, Category */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">Nationality</label>
@@ -720,7 +1244,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           type="text"
                           value={studentInfo.nationality}
                           onChange={(e) => setStudentInfo({ ...studentInfo, nationality: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs"
                         />
                       </div>
                       <div>
@@ -729,7 +1253,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           type="text"
                           value={studentInfo.religion}
                           onChange={(e) => setStudentInfo({ ...studentInfo, religion: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs"
                         />
                       </div>
                       <div>
@@ -737,7 +1261,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                         <select
                           value={studentInfo.category}
                           onChange={(e) => setStudentInfo({ ...studentInfo, category: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs bg-white"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white"
                         >
                           <option value="General">General</option>
                           <option value="OBC">OBC</option>
@@ -748,47 +1272,197 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-xs font-semibold text-slate-700 block mb-1">Residential Address</label>
-                      <textarea
-                        rows={2}
-                        placeholder="House/Flat number, Street, Locality..."
-                        value={studentInfo.address}
-                        onChange={(e) => setStudentInfo({ ...studentInfo, address: e.target.value })}
-                        className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-                      />
+                    {/* Part B3: Permanent (Residence) Address */}
+                    <div className="space-y-3 pt-2 border-t border-slate-100">
+                      <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                        <span>Permanent (Residence) Address</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div className="sm:col-span-4">
+                          <input
+                            type="text"
+                            placeholder="House / Flat No., Street, Locality..."
+                            value={studentInfo.address}
+                            onChange={(e) => handleResidenceAddressChange('address', e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="City / District"
+                            value={studentInfo.city}
+                            onChange={(e) => handleResidenceAddressChange('city', e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="State"
+                            value={studentInfo.state}
+                            onChange={(e) => handleResidenceAddressChange('state', e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="PIN Code"
+                            value={studentInfo.pincode}
+                            onChange={(e) => handleResidenceAddressChange('pincode', e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="tel"
+                            placeholder="Emergency Phone (Optional)"
+                            value={studentInfo.emergencyPhone}
+                            onChange={(e) => setStudentInfo({ ...studentInfo, emergencyPhone: e.target.value })}
+                            className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Part B3: Present Address Section with "Same as residence" Checkbox */}
+                    <div className="space-y-3 pt-2 border-t border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800">Present (Current) Address</span>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md">
+                          <input
+                            type="checkbox"
+                            checked={studentInfo.sameAsResidence}
+                            onChange={(e) => handleToggleSameAsResidence(e.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span>Same as residence address</span>
+                        </label>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div className="sm:col-span-4">
+                          <input
+                            type="text"
+                            placeholder="Present House / Flat No., Street, Locality..."
+                            disabled={studentInfo.sameAsResidence}
+                            value={studentInfo.presentAddress}
+                            onChange={(e) => setStudentInfo({ ...studentInfo, presentAddress: e.target.value })}
+                            className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                              studentInfo.sameAsResidence
+                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+                                : 'bg-white border-slate-300 focus:border-indigo-500'
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="Present City"
+                            disabled={studentInfo.sameAsResidence}
+                            value={studentInfo.presentCity}
+                            onChange={(e) => setStudentInfo({ ...studentInfo, presentCity: e.target.value })}
+                            className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                              studentInfo.sameAsResidence
+                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+                                : 'bg-white border-slate-300 focus:border-indigo-500'
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="Present State"
+                            disabled={studentInfo.sameAsResidence}
+                            value={studentInfo.presentState}
+                            onChange={(e) => setStudentInfo({ ...studentInfo, presentState: e.target.value })}
+                            className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                              studentInfo.sameAsResidence
+                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+                                : 'bg-white border-slate-300 focus:border-indigo-500'
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="Present PIN Code"
+                            disabled={studentInfo.sameAsResidence}
+                            value={studentInfo.presentPincode}
+                            onChange={(e) => setStudentInfo({ ...studentInfo, presentPincode: e.target.value })}
+                            className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                              studentInfo.sameAsResidence
+                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+                                : 'bg-white border-slate-300 focus:border-indigo-500'
+                            }`}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
 
-                {/* Step 2: Parent / Guardian */}
+                {/* ============================================================== */}
+                {/* STEP 2: Parent / Guardian with Aadhaar Numbers (Part B2) */}
+                {/* ============================================================== */}
                 {currentStep === 2 && (
                   <div className="space-y-4">
-                    <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
-                      Step 2: Parent & Guardian Details
-                    </h2>
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-sm font-bold text-slate-900">
+                          Step 2: Parent & Guardian Details
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Father's and Mother's 12-digit Aadhaar numbers are auto-formatted and Verhoeff-validated.
+                        </p>
+                      </div>
+                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Father's Name</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Father's Name <span className="text-slate-400 font-normal">(or Guardian)</span>
+                        </label>
                         <input
+                          id="fatherName"
                           type="text"
                           placeholder="e.g. Rajesh Sharma"
                           value={parentInfo.fatherName}
-                          onChange={(e) => setParentInfo({ ...parentInfo, fatherName: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          onChange={(e) => {
+                            setParentInfo({ ...parentInfo, fatherName: e.target.value });
+                            clearFieldError('parentName');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden ${
+                            fieldErrors.parentName ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300'
+                          }`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Mother's Name</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Father's Aadhaar No. (Part B2)
+                        </label>
                         <input
+                          id="fatherAadhaarNumber"
                           type="text"
-                          placeholder="e.g. Meenakshi Sharma"
-                          value={parentInfo.motherName}
-                          onChange={(e) => setParentInfo({ ...parentInfo, motherName: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          placeholder="e.g. 5621 8934 1029"
+                          maxLength={14}
+                          value={formatAadhaar(parentInfo.fatherAadhaarNumber)}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '').slice(0, 12);
+                            setParentInfo({ ...parentInfo, fatherAadhaarNumber: raw });
+                            clearFieldError('fatherAadhaarNumber');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs font-mono focus:outline-hidden ${
+                            fieldErrors.fatherAadhaarNumber
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500'
+                          }`}
                         />
+                        {fieldErrors.fatherAadhaarNumber && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.fatherAadhaarNumber}</p>
+                        )}
                       </div>
 
                       <div>
@@ -796,7 +1470,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                         <select
                           value={parentInfo.relationship}
                           onChange={(e) => setParentInfo({ ...parentInfo, relationship: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs bg-white"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white"
                         >
                           <option value="Father">Father</option>
                           <option value="Mother">Mother</option>
@@ -805,30 +1479,102 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          Primary Contact Phone <span className="text-rose-500">*</span>
+                          Mother's Name
                         </label>
                         <input
-                          type="tel"
-                          required
-                          placeholder="+91 98765 43210"
-                          value={parentInfo.primaryPhone}
-                          onChange={(e) => setParentInfo({ ...parentInfo, primaryPhone: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          id="motherName"
+                          type="text"
+                          placeholder="e.g. Meenakshi Sharma"
+                          value={parentInfo.motherName}
+                          onChange={(e) => {
+                            setParentInfo({ ...parentInfo, motherName: e.target.value });
+                            clearFieldError('parentName');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs focus:border-indigo-500 focus:outline-hidden ${
+                            fieldErrors.parentName ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300'
+                          }`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Email (For Fee Receipts)</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Mother's Aadhaar No. (Part B2)
+                        </label>
                         <input
+                          id="motherAadhaarNumber"
+                          type="text"
+                          placeholder="e.g. 8920 3412 7741"
+                          maxLength={14}
+                          value={formatAadhaar(parentInfo.motherAadhaarNumber)}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '').slice(0, 12);
+                            setParentInfo({ ...parentInfo, motherAadhaarNumber: raw });
+                            clearFieldError('motherAadhaarNumber');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs font-mono focus:outline-hidden ${
+                            fieldErrors.motherAadhaarNumber
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500'
+                          }`}
+                        />
+                        {fieldErrors.motherAadhaarNumber && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.motherAadhaarNumber}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {fieldErrors.parentName && (
+                      <p className="text-[11px] font-semibold text-rose-600">{fieldErrors.parentName}</p>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">
+                          Primary Contact Mobile <span className="text-rose-500 font-bold">*</span>
+                        </label>
+                        <input
+                          id="primaryPhone"
+                          name="primaryPhone"
+                          type="tel"
+                          placeholder="10-digit mobile (e.g. 9876543210)"
+                          maxLength={10}
+                          value={parentInfo.primaryPhone}
+                          onChange={(e) => {
+                            setParentInfo({ ...parentInfo, primaryPhone: e.target.value });
+                            clearFieldError('primaryPhone');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs transition-colors focus:outline-hidden ${
+                            fieldErrors.primaryPhone
+                              ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                              : 'border-slate-300 focus:border-indigo-500'
+                          }`}
+                        />
+                        {fieldErrors.primaryPhone && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.primaryPhone}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">Email Address</label>
+                        <input
+                          id="email"
                           type="email"
                           placeholder="parent@example.com"
                           value={parentInfo.email}
-                          onChange={(e) => setParentInfo({ ...parentInfo, email: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          onChange={(e) => {
+                            setParentInfo({ ...parentInfo, email: e.target.value });
+                            clearFieldError('email');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                            fieldErrors.email ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300'
+                          }`}
                         />
+                        {fieldErrors.email && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.email}</p>
+                        )}
                       </div>
 
                       <div>
@@ -838,27 +1584,34 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           placeholder="e.g. Software Engineer"
                           value={parentInfo.occupation}
                           onChange={(e) => setParentInfo({ ...parentInfo, occupation: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs"
                         />
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Step 3: Academic Information & Session Allocation */}
+                {/* ============================================================== */}
+                {/* STEP 3: Academic Session, Class & Previous School (Part B4 & A2) */}
+                {/* ============================================================== */}
                 {currentStep === 3 && (
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                      <h2 className="text-sm font-bold text-slate-900">
-                        Step 3: Academic Session, Class & Section Allocation
-                      </h2>
+                      <div>
+                        <h2 className="text-sm font-bold text-slate-900">
+                          Step 3: Academic Session, Class & Previous School Details
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Only active unarchived academic sessions appear below for new enrollment.
+                        </p>
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleTabChange('sessions')}
                         className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
                       >
                         <Settings className="h-3.5 w-3.5" />
-                        <span>Manage Academic Sessions</span>
+                        <span>Session Manager</span>
                       </button>
                     </div>
 
@@ -866,7 +1619,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                     <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-slate-800 block">
-                          Academic Admission Session <span className="text-rose-500">*</span>
+                          Academic Admission Session <span className="text-rose-500 font-bold">*</span>
                         </label>
                         {selectedSession && (
                           <div className="flex items-center gap-2">
@@ -892,55 +1645,67 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                         )}
                       </div>
 
+                      {/* Dropdown strictly renders only unarchived sessions (Part A2) */}
                       <select
+                        id="academicYearId"
+                        name="academicYearId"
                         value={academicInfo.academicYearId}
-                        onChange={(e) => setAcademicInfo({ ...academicInfo, academicYearId: e.target.value })}
-                        className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-bold text-slate-900 focus:border-indigo-500 cursor-pointer"
+                        onChange={(e) => {
+                          setAcademicInfo({ ...academicInfo, academicYearId: e.target.value });
+                          clearFieldError('academicYearId');
+                        }}
+                        className={`w-full rounded-lg border py-2 px-3 text-xs bg-white font-bold text-slate-900 focus:outline-hidden cursor-pointer ${
+                          fieldErrors.academicYearId
+                            ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                            : 'border-slate-300 focus:border-indigo-500'
+                        }`}
                       >
-                        {academicYears.map((y) => (
+                        {activeUnarchivedSessions.map((y) => (
                           <option key={y.id} value={y.id}>
-                            Session {y.name} {y.isActive ? '(Active Primary)' : ''} · [Status: {y.admissionStatus || 'OPEN'}]
+                            Session {y.name} {y.isActive ? '(Active Primary)' : ''} · [Intake: {y.admissionStatus || 'OPEN'}]
                           </option>
                         ))}
                       </select>
+                      {fieldErrors.academicYearId && (
+                        <p className="text-[11px] font-semibold text-rose-600">{fieldErrors.academicYearId}</p>
+                      )}
 
                       {/* Warning if closed */}
                       {selectedSession?.admissionStatus === 'CLOSED' && (
                         <div className="flex items-center gap-2 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
-                          <AlertCircle className="h-4 w-4 shrink-0" />
+                          <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
                           <span>
-                            Admissions for Session <strong>{selectedSession.name}</strong> are marked CLOSED. Please switch to an open session or reopen admissions in Session Manager.
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Session Seat Quota indicator */}
-                      {selectedSession && (
-                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
-                          <span>
-                            Enrolled: <strong>{selectedSession.enrolledStudentsCount || selectedSession._count?.studentsAcademic || 0}</strong> / {selectedSession.targetEnrollment || 300} seats target
-                          </span>
-                          <span>
-                            Prefix: <strong className="font-mono text-indigo-700">{selectedSession.admissionPrefix || 'ADM'}-YYYY-XXXX</strong>
+                            Admissions for Session <strong>{selectedSession.name}</strong> are currently CLOSED.
                           </span>
                         </div>
                       )}
                     </div>
 
+                    {/* Class & Section */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          Admitting Class <span className="text-rose-500">*</span>
+                          Admitting Class <span className="text-rose-500 font-bold">*</span>
                         </label>
                         <select
+                          id="classId"
+                          name="classId"
                           value={academicInfo.classId}
-                          onChange={(e) => setAcademicInfo({ ...academicInfo, classId: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs bg-white font-medium"
+                          onChange={(e) => {
+                            setAcademicInfo({ ...academicInfo, classId: e.target.value });
+                            clearFieldError('classId');
+                          }}
+                          className={`w-full rounded-lg border py-2 px-3 text-xs bg-white font-medium focus:outline-hidden ${
+                            fieldErrors.classId ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300 focus:border-indigo-500'
+                          }`}
                         >
                           {classes.map((c) => (
                             <option key={c.id} value={c.id}>{c.name}</option>
                           ))}
                         </select>
+                        {fieldErrors.classId && (
+                          <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.classId}</p>
+                        )}
                       </div>
 
                       <div>
@@ -948,7 +1713,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                         <select
                           value={academicInfo.sectionId}
                           onChange={(e) => setAcademicInfo({ ...academicInfo, sectionId: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs bg-white font-medium"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-medium focus:border-indigo-500 focus:outline-hidden"
                         >
                           {availableSections.map((sec) => (
                             <option key={sec.id} value={sec.id}>Section {sec.name}</option>
@@ -957,45 +1722,260 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="text-xs font-semibold text-slate-700 block mb-1">
-                          Admission Number (Auto-assigned if empty)
+                          Admission Number (Auto-generated if blank)
                         </label>
                         <input
                           type="text"
-                          placeholder={`e.g. ${selectedSession?.admissionPrefix || 'ADM'}-2026-0001`}
+                          placeholder={`e.g. ${selectedSession?.admissionPrefix || 'PBPS'}-2026-0001`}
                           value={academicInfo.admissionNumber}
                           onChange={(e) => setAcademicInfo({ ...academicInfo, admissionNumber: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs font-mono"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs font-mono"
                         />
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Enrollment Date</label>
+                        <label className="text-xs font-semibold text-slate-700 block mb-1">Admission Date</label>
                         <input
                           type="date"
                           value={academicInfo.admissionDate}
                           onChange={(e) => setAcademicInfo({ ...academicInfo, admissionDate: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
+                          className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs"
                         />
                       </div>
+                    </div>
 
-                      <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Previous School (if transfer)</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. St. Xavier's Convent"
-                          value={academicInfo.previousSchool}
-                          onChange={(e) => setAcademicInfo({ ...academicInfo, previousSchool: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 py-1.5 px-3 text-xs"
-                        />
+                    {/* Part B4: Previous School Details (Conditional Toggle) */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">
+                            Previous School / Transfer Student Record (Part B4)
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            Has the student previously studied elsewhere or transferring from another school?
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-100 border border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAcademicInfo(prev => ({
+                                ...prev,
+                                isPreviouslyEnrolled: false,
+                                previousSchoolName: '',
+                                previousLeavingDate: '',
+                                previousTcNumber: '',
+                                previousTcDate: ''
+                              }));
+                              clearFieldError('previousSchoolName');
+                              clearFieldError('previousClassPassed');
+                              clearFieldError('previousMedium');
+                              clearFieldError('previousLeavingDate');
+                            }}
+                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                              !academicInfo.isPreviouslyEnrolled
+                                ? 'bg-white text-slate-900 shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            No (Fresher)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAcademicInfo(prev => ({ ...prev, isPreviouslyEnrolled: true }))}
+                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                              academicInfo.isPreviouslyEnrolled
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            Yes (Transfer)
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Conditional Section shown only if Toggle is YES */}
+                      {academicInfo.isPreviouslyEnrolled && (
+                        <div className="space-y-3 pt-3 border-t border-slate-100">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Previous School Name <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <input
+                                id="previousSchoolName"
+                                type="text"
+                                placeholder="e.g. St. Xavier's High School"
+                                value={academicInfo.previousSchoolName}
+                                onChange={(e) => {
+                                  setAcademicInfo({ ...academicInfo, previousSchoolName: e.target.value });
+                                  clearFieldError('previousSchoolName');
+                                }}
+                                className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                                  fieldErrors.previousSchoolName
+                                    ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                                    : 'border-slate-300 focus:border-indigo-500'
+                                }`}
+                              />
+                              {fieldErrors.previousSchoolName && (
+                                <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.previousSchoolName}</p>
+                              )}
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Class Passed at Previous School <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <select
+                                id="previousClassPassed"
+                                value={academicInfo.previousClassPassed}
+                                onChange={(e) => {
+                                  setAcademicInfo({ ...academicInfo, previousClassPassed: e.target.value });
+                                  clearFieldError('previousClassPassed');
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-indigo-500 focus:outline-hidden"
+                              >
+                                {classes.map(c => (
+                                  <option key={c.id} value={c.name}>{c.name}</option>
+                                ))}
+                                <option value="UKG / Kindergarten">UKG / Kindergarten</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Medium of Instruction <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <select
+                                id="previousMedium"
+                                value={academicInfo.previousMedium}
+                                onChange={(e) => {
+                                  setAcademicInfo({ ...academicInfo, previousMedium: e.target.value });
+                                  clearFieldError('previousMedium');
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-indigo-500 focus:outline-hidden"
+                              >
+                                <option value="English">English</option>
+                                <option value="Hindi">Hindi</option>
+                                <option value="Marathi">Marathi</option>
+                                <option value="Other">Other (Specify below)</option>
+                              </select>
+
+                              {academicInfo.previousMedium === 'Other' && (
+                                <input
+                                  type="text"
+                                  placeholder="Specify other medium (e.g. Bengali, Urdu)..."
+                                  value={academicInfo.previousMediumOther}
+                                  onChange={(e) => {
+                                    setAcademicInfo({ ...academicInfo, previousMediumOther: e.target.value });
+                                    clearFieldError('previousMediumOther');
+                                  }}
+                                  className="mt-1.5 w-full rounded-lg border border-slate-300 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
+                                />
+                              )}
+                              {fieldErrors.previousMediumOther && (
+                                <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.previousMediumOther}</p>
+                              )}
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Date of Leaving Previous School <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <input
+                                id="previousLeavingDate"
+                                type="date"
+                                max={new Date().toISOString().split('T')[0]}
+                                value={academicInfo.previousLeavingDate}
+                                onChange={(e) => {
+                                  setAcademicInfo({ ...academicInfo, previousLeavingDate: e.target.value });
+                                  clearFieldError('previousLeavingDate');
+                                }}
+                                className={`w-full rounded-lg border py-2 px-3 text-xs focus:outline-hidden ${
+                                  fieldErrors.previousLeavingDate
+                                    ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                                    : 'border-slate-300 focus:border-indigo-500'
+                                }`}
+                              />
+                              {fieldErrors.previousLeavingDate && (
+                                <p className="mt-1 text-[11px] font-semibold text-rose-600">{fieldErrors.previousLeavingDate}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Previous School TC No. (Optional)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. TC-2026/894"
+                                value={academicInfo.previousTcNumber}
+                                onChange={(e) => setAcademicInfo({ ...academicInfo, previousTcNumber: e.target.value })}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                TC Issue Date (Optional)
+                              </label>
+                              <input
+                                type="date"
+                                value={academicInfo.previousTcDate}
+                                onChange={(e) => setAcademicInfo({ ...academicInfo, previousTcDate: e.target.value })}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Hostel Resident Option */}
+                    <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-xs font-bold text-slate-900">Hostel Boarding Facility</div>
+                          <div className="text-[11px] text-slate-500">Is the student taking school hostel accommodation?</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStudentInfo(prev => ({ ...prev, isHostelStudent: false }))}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                              !studentInfo.isHostelStudent
+                                ? 'bg-white text-slate-800 shadow-2xs border border-slate-300'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            No (Day Scholar)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStudentInfo(prev => ({ ...prev, isHostelStudent: true }))}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                              studentInfo.isHostelStudent
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            Yes (Hostel Student)
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Step 4: Documents Upload */}
+                {/* ============================================================== */}
+                {/* STEP 4: Documents Upload */}
+                {/* ============================================================== */}
                 {currentStep === 4 && (
                   <div className="space-y-5">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
@@ -1118,12 +2098,6 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           placeholder="Add another document (e.g. Income Certificate, Medical Record, Caste Certificate)"
                           value={customDocTitle}
                           onChange={(e) => setCustomDocTitle(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddCustomDoc();
-                            }
-                          }}
                           className="flex-1 rounded-lg border border-slate-200 py-1.5 px-3 text-xs focus:border-indigo-500 focus:outline-hidden"
                         />
                         <button
@@ -1140,106 +2114,140 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                   </div>
                 )}
 
-                {/* Step 5: Fee Configuration & Review */}
+                {/* ============================================================== */}
+                {/* STEP 5: Fee Review & Submit */}
+                {/* ============================================================== */}
                 {currentStep === 5 && (
                   <div className="space-y-4">
-                    <h2 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
-                      Step 5: Review Profile & Fee Structure
-                    </h2>
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-sm font-bold text-slate-900">
+                          Step 5: Review Admission Summary & Submit
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Confirm all student profile data and fee schedule before final admission submission.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={fetchAdmissionQuote}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                      >
+                        Recalculate Fees
+                      </button>
+                    </div>
 
-                    {/* Profile Summary Card */}
+                    {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Student Profile</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Student Profile</span>
+                          {studentInfo.photoUrl && (
+                            <img src={studentInfo.photoUrl} alt="Photo" className="h-8 w-8 rounded-full object-cover border" />
+                          )}
+                        </div>
                         <div className="font-bold text-sm text-slate-900">
                           {studentInfo.firstName} {studentInfo.middleName} {studentInfo.lastName}
                         </div>
                         <div className="text-slate-600">Gender: {studentInfo.gender} · DOB: {studentInfo.dateOfBirth}</div>
-                        <div className="text-slate-600">Aadhaar: {studentInfo.aadhaarNumber || 'Not provided'}</div>
-                        <div className="text-slate-600">Address: {studentInfo.address || 'Address on file'}</div>
+                        <div className="text-slate-600">
+                          Status: <strong className={studentInfo.isHostelStudent ? "text-indigo-700" : "text-slate-800"}>
+                            {studentInfo.isHostelStudent ? 'Hostel Boarder' : 'Day Scholar'}
+                          </strong>
+                        </div>
+                        {academicInfo.isPreviouslyEnrolled && (
+                          <div className="text-[11px] text-slate-600 pt-1 border-t border-slate-200">
+                            Transfer from: <strong>{academicInfo.previousSchoolName}</strong> ({academicInfo.previousClassPassed})
+                          </div>
+                        )}
                       </div>
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Academic & Session Details</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Session & Parent Information</span>
                         <div className="font-bold text-sm text-slate-900">
-                          Session {selectedSession?.name} · {classes.find(c => c.id === academicInfo.classId)?.name} (
-                          {availableSections.find(s => s.id === academicInfo.sectionId)?.name || 'A'})
+                          Session {selectedSession?.name} · {classes.find(c => c.id === academicInfo.classId)?.name}
                         </div>
                         <div className="text-slate-600">Parent: {parentInfo.fatherName || parentInfo.motherName}</div>
                         <div className="text-slate-600">Contact: {parentInfo.primaryPhone}</div>
-                        <div className="text-slate-600">Email: {parentInfo.email || 'N/A'}</div>
+                        <div className="text-slate-600">Admission Date: {academicInfo.admissionDate}</div>
                       </div>
                     </div>
 
-                    {/* Applicable Fee Schedule Table */}
-                    <div className="rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="bg-slate-800 text-white px-4 py-2.5 text-xs font-bold flex justify-between items-center">
-                        <span>Applicable Fee Schedule (Auto-Configured for Session {selectedSession?.name})</span>
-                        <span className="text-[11px] font-normal text-slate-300">
-                          Standard {classes.find(c => c.id === academicInfo.classId)?.name}
+                    {/* Itemized Fee Quote */}
+                    <div className="rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                      <div className="bg-slate-900 text-white px-4 py-3 text-xs font-bold flex justify-between items-center">
+                        <span>Standard Admission Fee Schedule</span>
+                        <span className="font-mono text-emerald-400">
+                          Total: ₹{(admissionQuote?.totalAmount || 0).toLocaleString('en-IN')}
                         </span>
                       </div>
-
-                      {feeStructures.length > 0 && feeStructures[0]?.items?.length > 0 ? (
-                        <table className="w-full text-xs text-left">
-                          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
-                            <tr>
-                              <th className="py-2 px-4">Fee Head</th>
-                              <th className="py-2 px-4">Billing Frequency</th>
-                              <th className="py-2 px-4 text-right">Standard Amount (₹)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {feeStructures[0].items.map((item: any) => (
-                              <tr key={item.id}>
-                                <td className="py-2 px-4 font-semibold text-slate-800">{item.feeType?.name}</td>
-                                <td className="py-2 px-4 text-slate-500">{item.frequency}</td>
-                                <td className="py-2 px-4 text-right font-mono font-bold text-slate-900">
-                                  ₹{Number(item.amount).toLocaleString('en-IN')}
-                                </td>
-                              </tr>
+                      <div className="p-4 bg-white space-y-2 text-xs">
+                        {admissionQuote?.items && admissionQuote.items.length > 0 ? (
+                          <div className="divide-y divide-slate-100">
+                            {admissionQuote.items.map((item, idx) => (
+                              <div key={idx} className="py-1.5 flex justify-between items-center">
+                                <div>
+                                  <span className="font-semibold text-slate-800">{item.feeHead}</span>
+                                  {item.frequency && (
+                                    <span className="ml-2 text-[10px] text-slate-400 uppercase">({item.frequency})</span>
+                                  )}
+                                </div>
+                                <span className="font-mono font-bold text-slate-900">
+                                  ₹{item.amount.toLocaleString('en-IN')}
+                                </span>
+                              </div>
                             ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div className="p-4 text-center text-xs text-slate-500">
-                          Default tuition structure will apply on admission confirmation.
-                        </div>
-                      )}
+                          </div>
+                        ) : (
+                          <div className="text-slate-400 italic text-center py-2">
+                            Standard class fee structure will be applied upon enrollment.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {/* Stepper Navigation Buttons */}
-                <div className="mt-8 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="mt-8 flex items-center justify-between pt-4 border-t border-slate-200">
                   {currentStep > 1 ? (
                     <button
                       type="button"
                       onClick={handlePrevious}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 min-h-[42px] order-2 sm:order-1 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
                     >
-                      <ArrowLeft className="h-3.5 w-3.5" />
-                      <span>Previous</span>
+                      <ArrowLeft className="h-4 w-4" />
+                      <span>Previous Step</span>
                     </button>
-                  ) : <div className="hidden sm:block" />}
+                  ) : <div />}
 
                   {currentStep < 5 ? (
                     <button
                       type="button"
                       onClick={handleNext}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-6 py-2.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs min-h-[42px] order-1 sm:order-2 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors shadow-2xs"
                     >
-                      <span>Next Step</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
+                      <span>Proceed to {steps[currentStep]?.title}</span>
+                      <ArrowRight className="h-4 w-4" />
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={handleSubmitAdmission}
                       disabled={submitting}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 shadow-xs min-h-[44px] order-1 sm:order-2 transition-colors"
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50"
                     >
-                      {submitting ? 'Creating Student Records...' : 'Complete & Confirm Admission'}
+                      {submitting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Finalizing Admission...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Complete & Submit Admission</span>
+                        </>
+                      )}
                     </button>
                   )}
                 </div>
@@ -1271,7 +2279,6 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
             handleTabChange('register');
           }}
           onOpenPromotionTab={(sessionId) => {
-            if (sessionId) setSelectedSessionForRegister(sessionId);
             handleTabChange('promote');
           }}
         />
@@ -1281,26 +2288,18 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
       {activeTab === 'register' && (
         <SessionRegisterTab
           sessions={academicYears}
-          selectedSessionId={selectedSessionForRegister || academicYears[0]?.id || ''}
-          onSelectSessionId={(id) => setSelectedSessionForRegister(id)}
-          onOpenFeeCollectionForStudent={onOpenFeeCollectionForStudent}
-          onStartAdmissionForSession={(sessionId) => {
-            setAcademicInfo(prev => ({ ...prev, academicYearId: sessionId }));
-            handleTabChange('wizard');
-          }}
-          onOpenPromotionTab={(sessionId) => {
-            setSelectedSessionForRegister(sessionId);
-            handleTabChange('promote');
-          }}
+          classes={classes}
+          selectedSessionId={selectedSessionForRegister || academicInfo.academicYearId}
+          onSelectSession={(id) => setSelectedSessionForRegister(id)}
+          onEnrollStudent={() => handleTabChange('wizard')}
         />
       )}
 
-      {/* TAB 4: STUDENT PROMOTION & ROLLOVER */}
+      {/* TAB 4: SESSION PROMOTION */}
       {activeTab === 'promote' && (
         <SessionPromotionTab
           sessions={academicYears}
           classes={classes}
-          defaultFromSessionId={selectedSessionForRegister || academicYears[0]?.id}
           onPromotionComplete={fetchMetadata}
         />
       )}
@@ -1308,12 +2307,18 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
       {/* Create / Edit Session Modal */}
       <CreateEditSessionModal
         isOpen={createEditModalOpen}
-        onClose={() => {
-          setCreateEditModalOpen(false);
-          setSessionToEdit(null);
-        }}
+        onClose={() => setCreateEditModalOpen(false)}
         sessionToEdit={sessionToEdit}
+        existingSessions={academicYears}
         onSuccess={fetchMetadata}
+      />
+
+      {/* SLC Certificate Modal */}
+      <SLCModal
+        isOpen={slcModalOpen}
+        onClose={() => setSlcModalOpen(false)}
+        slcData={currentSlc}
+        onReprintSuccess={fetchMetadata}
       />
     </div>
   );

@@ -10,6 +10,7 @@ export interface User {
   fullName: string;
   role: RoleType;
   phone?: string;
+  permissions?: string[];
 }
 
 interface AuthContextType {
@@ -18,6 +19,9 @@ interface AuthContextType {
   isLoading: boolean;
   login: (credentials: { username: string; password: string }) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
+  hasPermission: (permissionCode: string) => boolean;
+  hasAnyPermission: (permissionCodes: string[]) => boolean;
   canAccess: (module: 'dashboard' | 'admissions' | 'students' | 'fees' | 'payments' | 'receipts' | 'reports' | 'staff' | 'settings') => boolean;
 }
 
@@ -31,22 +35,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('edumanage_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      if (token) {
-        try {
-          const res = await apiClient.get('/auth/me');
-          if (res.data?.success && res.data?.data) {
-            setUser(res.data.data);
-            localStorage.setItem('edumanage_user', JSON.stringify(res.data.data));
-          }
-        } catch {
-          logout();
+  const fetchCurrentUser = async () => {
+    if (token) {
+      try {
+        const res = await apiClient.get('/auth/me');
+        if (res.data?.success && res.data?.data) {
+          setUser(res.data.data);
+          localStorage.setItem('edumanage_user', JSON.stringify(res.data.data));
         }
+      } catch {
+        logout();
       }
-      setIsLoading(false);
-    };
-    checkAuth();
+    }
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
+    fetchCurrentUser();
   }, [token]);
 
   const login = async ({ username, password }: { username: string; password: string }) => {
@@ -78,6 +83,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('edumanage_user');
   };
 
+  const refreshUser = async () => {
+    await fetchCurrentUser();
+  };
+
+  const hasPermission = (permissionCode: string): boolean => {
+    if (!user) return false;
+    if (user.role === 'SUPER_ADMIN') return true;
+    const perms = user.permissions || [];
+    return perms.includes('*') || perms.includes(permissionCode);
+  };
+
+  const hasAnyPermission = (permissionCodes: string[]): boolean => {
+    if (!user) return false;
+    if (user.role === 'SUPER_ADMIN') return true;
+    return permissionCodes.some(code => hasPermission(code));
+  };
+
   const canAccess = (module: 'dashboard' | 'admissions' | 'students' | 'fees' | 'payments' | 'receipts' | 'reports' | 'staff' | 'settings'): boolean => {
     if (!user) return false;
     if (user.role === 'SUPER_ADMIN') return true;
@@ -86,25 +108,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'dashboard':
         return true;
       case 'admissions':
-        return ['PRINCIPAL', 'ADMISSION_STAFF'].includes(user.role);
+        return hasAnyPermission(['admission.view', 'admission.manage']);
       case 'students':
-        return ['PRINCIPAL', 'ADMISSION_STAFF', 'ACCOUNTANT', 'STAFF'].includes(user.role);
+        return hasPermission('student.view');
       case 'fees':
+        return hasAnyPermission(['fee.structure.manage', 'fee.view']);
       case 'payments':
+        return hasAnyPermission(['fee.collect', 'fee.view']);
       case 'receipts':
-        return ['PRINCIPAL', 'ACCOUNTANT'].includes(user.role);
+        return hasAnyPermission(['receipt.print', 'receipt.reprint']);
       case 'reports':
-        return ['PRINCIPAL', 'ACCOUNTANT'].includes(user.role);
+        return hasPermission('report.view');
       case 'staff':
+        return hasAnyPermission(['user.manage', 'roles.manage']);
       case 'settings':
-        return false; // Only SUPER_ADMIN can access, which is already handled above
+        return hasAnyPermission(['settings.manage', 'backup.manage']);
       default:
         return false;
     }
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, logout, canAccess }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isLoading,
+        login,
+        logout,
+        refreshUser,
+        hasPermission,
+        hasAnyPermission,
+        canAccess,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,66 +1,28 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, RoleType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { config } from '../config/index.js';
+import { config, isDatabaseConfigured } from '../config/index.js';
 import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { FALLBACK_USERS, getDefaultPermissionsForRole } from '../utils/fallbackData.js';
 
 const prisma = new PrismaClient();
 
-// Built-in resilient accounts for seamless login even if MySQL is unconfigured/offline
-const FALLBACK_DEMO_USERS = [
-  {
-    id: 'e15f8f39-6b68-4d03-9c73-9ba9524238f3',
-    email: 'admin@greenwoodhigh.edu',
-    username: 'superadmin',
-    fullName: 'Vikramaditya Rathore',
-    role: 'SUPER_ADMIN' as const,
-    plainPassword: 'Admin@123',
-    phone: '+91 98111 22233',
-    isActive: true,
-  },
-  {
-    id: 'c7e86a92-7bcf-4429-a390-da740b0cce83',
-    email: 'principal@greenwoodhigh.edu',
-    username: 'principal',
-    fullName: 'Dr. Sunita Deshmukh',
-    role: 'PRINCIPAL' as const,
-    plainPassword: 'Admin@123',
-    phone: '+91 98222 33344',
-    isActive: true,
-  },
-  {
-    id: 'f4432428-0813-4833-b17c-e41a453e5a79',
-    email: 'accountant@greenwoodhigh.edu',
-    username: 'accountant',
-    fullName: 'Rajesh K. Mehta',
-    role: 'ACCOUNTANT' as const,
-    plainPassword: 'Admin@123',
-    phone: '+91 98333 44455',
-    isActive: true,
-  },
-  {
-    id: '97cf286b-8376-4fd3-b79a-7e083fdbbd35',
-    email: 'admission@greenwoodhigh.edu',
-    username: 'admission_staff',
-    fullName: 'Pooja Verma',
-    role: 'ADMISSION_STAFF' as const,
-    plainPassword: 'Staff@123',
-    phone: '+91 98444 55566',
-    isActive: true,
-  },
-  {
-    id: 'cbc26690-0d9b-4a61-9a73-86e611defc56',
-    email: 'staff@greenwoodhigh.edu',
-    username: 'staff_user',
-    fullName: 'Arun Kumar',
-    role: 'STAFF' as const,
-    plainPassword: 'Staff@123',
-    phone: '+91 98555 66677',
-    isActive: true,
+const getPermissionsForRole = async (role: RoleType): Promise<string[]> => {
+  if (role === 'SUPER_ADMIN') {
+    return ['*'];
   }
-];
+  try {
+    const rolePerms = await prisma.rolePermission.findMany({
+      where: { role },
+      select: { permissionCode: true }
+    });
+    return rolePerms.map(rp => rp.permissionCode);
+  } catch (err) {
+    return getDefaultPermissionsForRole(role);
+  }
+};
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -76,62 +38,37 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     let user: any = null;
-    let isDbDown = false;
+    let isOfflineFallback = false;
 
-    try {
-      user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { email: username.toLowerCase().trim() },
-            { username: username.trim() }
-          ]
-        }
-      });
-    } catch (dbError: any) {
-      console.warn('⚠️ MySQL query failed, attempting built-in fallback authentication:', dbError.message);
-      isDbDown = true;
-    }
-
-    // If database lookup failed or is unreachable, authenticate against built-in verified accounts
-    if (isDbDown || !user) {
-      const fallbackUser = FALLBACK_DEMO_USERS.find(
-        (u) =>
-          u.username.toLowerCase() === username.trim().toLowerCase() ||
-          u.email.toLowerCase() === username.trim().toLowerCase()
-      );
-
-      if (fallbackUser && (fallbackUser.plainPassword === password || password === 'Admin@123' || password === 'Staff@123')) {
-        const payload = {
-          id: fallbackUser.id,
-          email: fallbackUser.email,
-          username: fallbackUser.username,
-          fullName: fallbackUser.fullName,
-          role: fallbackUser.role
-        };
-
-        const accessToken = jwt.sign(payload, config.jwtSecret, { expiresIn: '24h' });
-        const refreshToken = jwt.sign(payload, config.jwtRefreshSecret, { expiresIn: '7d' });
-
-        res.json({
-          success: true,
-          message: 'Login successful',
-          data: {
-            user: payload,
-            accessToken,
-            refreshToken
+    if (!isDatabaseConfigured()) {
+      isOfflineFallback = true;
+      const lower = username.toLowerCase().trim();
+      user = FALLBACK_USERS.find(u => u.email.toLowerCase() === lower || u.username.toLowerCase() === lower) || null;
+    } else {
+      try {
+        user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { email: username.toLowerCase().trim() },
+              { username: username.trim() }
+            ]
           }
         });
-        return;
+      } catch (dbErr: any) {
+        console.warn('Database connection unavailable, authenticating via fallback store:', dbErr.message);
+        isOfflineFallback = true;
+        const lower = username.toLowerCase().trim();
+        user = FALLBACK_USERS.find(u => u.email.toLowerCase() === lower || u.username.toLowerCase() === lower) || null;
       }
+    }
 
-      if (!user) {
-        res.status(401).json({
-          success: false,
-          message: 'Invalid credentials. Please check your username and password.',
-          errorCode: 'INVALID_CREDENTIALS'
-        });
-        return;
-      }
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid credentials. Please check your username and password.',
+        errorCode: 'INVALID_CREDENTIALS'
+      });
+      return;
     }
 
     if (!user.isActive) {
@@ -143,7 +80,21 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    let isMatch = false;
+    if (isOfflineFallback) {
+      // Support default seeded passwords when database is offline
+      if (
+        (user.role === 'SUPER_ADMIN' && (password === 'admin' || password === 'Admin@123')) ||
+        (user.role !== 'SUPER_ADMIN' && (password === 'staff' || password === 'Staff@123' || password === 'admin'))
+      ) {
+        isMatch = true;
+      } else {
+        isMatch = await bcrypt.compare(password, user.passwordHash).catch(() => false);
+      }
+    } else {
+      isMatch = await bcrypt.compare(password, user.passwordHash);
+    }
+
     if (!isMatch) {
       res.status(401).json({
         success: false,
@@ -154,34 +105,41 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Update last login
-    try {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { lastLoginAt: new Date() }
-      });
-    } catch (e) {
-      // Non-critical
+    if (!isOfflineFallback) {
+      try {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() }
+        });
+      } catch {}
     }
+
+    const permissions = isOfflineFallback
+      ? getDefaultPermissionsForRole(user.role)
+      : await getPermissionsForRole(user.role);
 
     const payload = {
       id: user.id,
       email: user.email,
       username: user.username,
       fullName: user.fullName,
-      role: user.role
+      role: user.role,
+      permissions
     };
 
     const accessToken = jwt.sign(payload, config.jwtSecret, { expiresIn: '24h' });
     const refreshToken = jwt.sign(payload, config.jwtRefreshSecret, { expiresIn: '7d' });
 
-    await logAudit({
-      userId: user.id,
-      userName: user.fullName,
-      action: 'LOGIN',
-      module: 'AUTH',
-      recordId: user.id,
-      ipAddress: req.ip
-    });
+    try {
+      await logAudit({
+        userId: user.id,
+        userName: user.fullName,
+        action: 'LOGIN',
+        module: 'AUTH',
+        recordId: user.id,
+        ipAddress: req.ip
+      });
+    } catch {}
 
     res.json({
       success: true,
@@ -209,8 +167,9 @@ export const getMe = async (req: AuthenticatedRequest, res: Response): Promise<v
       return;
     }
 
+    let user: any = null;
     try {
-      const user = await prisma.user.findUnique({
+      user = await prisma.user.findUnique({
         where: { id: req.user.id },
         select: {
           id: true,
@@ -224,32 +183,47 @@ export const getMe = async (req: AuthenticatedRequest, res: Response): Promise<v
           createdAt: true
         }
       });
-
-      if (user && user.isActive) {
-        res.json({
-          success: true,
-          data: user
-        });
-        return;
-      }
     } catch (dbErr) {
-      // Database not reachable, fallback to user in token
+      const fallback = FALLBACK_USERS.find(u => u.id === req.user?.id || u.role === req.user?.role);
+      if (fallback) {
+        user = {
+          id: fallback.id,
+          email: fallback.email,
+          username: fallback.username,
+          fullName: fallback.fullName,
+          phone: '+91 98111 22233',
+          role: fallback.role,
+          isActive: true,
+          lastLoginAt: new Date(),
+          createdAt: new Date()
+        };
+      } else if (req.user) {
+        user = {
+          id: req.user.id,
+          email: req.user.email,
+          username: req.user.username,
+          fullName: req.user.fullName,
+          phone: '',
+          role: req.user.role,
+          isActive: true,
+          lastLoginAt: new Date(),
+          createdAt: new Date()
+        };
+      }
     }
 
-    // Fallback: Return profile directly from verified JWT payload
-    const fallbackUser = FALLBACK_DEMO_USERS.find((u) => u.id === req.user?.id || u.username === req.user?.username);
+    if (!user || !user.isActive) {
+      res.status(401).json({ success: false, message: 'User not found or inactive' });
+      return;
+    }
+
+    const permissions = await getPermissionsForRole(user.role);
+
     res.json({
       success: true,
       data: {
-        id: req.user.id,
-        email: req.user.email,
-        username: req.user.username,
-        fullName: req.user.fullName,
-        role: req.user.role,
-        phone: fallbackUser?.phone || '+91 98111 22233',
-        isActive: true,
-        lastLoginAt: new Date(),
-        createdAt: new Date()
+        ...user,
+        permissions
       }
     });
   } catch (error: any) {
@@ -266,25 +240,22 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
     }
 
     const decoded = jwt.verify(token, config.jwtRefreshSecret) as any;
-    let user: any = null;
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
-    try {
-      user = await prisma.user.findUnique({ where: { id: decoded.id } });
-    } catch {
-      // Fallback
-      user = FALLBACK_DEMO_USERS.find((u) => u.id === decoded.id || u.username === decoded.username);
+    if (!user || !user.isActive) {
+      res.status(401).json({ success: false, message: 'Invalid refresh token or inactive account' });
+      return;
     }
 
-    if (!user) {
-      user = FALLBACK_DEMO_USERS.find((u) => u.id === decoded.id || u.username === decoded.username);
-    }
+    const permissions = await getPermissionsForRole(user.role);
 
     const payload = {
-      id: user?.id || decoded.id,
-      email: user?.email || decoded.email,
-      username: user?.username || decoded.username,
-      fullName: user?.fullName || decoded.fullName,
-      role: user?.role || decoded.role
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      permissions
     };
 
     const newAccessToken = jwt.sign(payload, config.jwtSecret, { expiresIn: '24h' });

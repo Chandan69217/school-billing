@@ -17,6 +17,7 @@ import { SettingsPage } from './pages/SettingsPage.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { FeeCollectionModal } from './components/fees/FeeCollectionModal.js';
 import { ReceiptModal } from './components/receipts/ReceiptModal.js';
+import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,7 +64,9 @@ const ProtectedLayout: React.FC<{
         />
 
         <main className="flex-1 p-3 sm:p-5 md:p-8 max-w-7xl w-full mx-auto min-w-0">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

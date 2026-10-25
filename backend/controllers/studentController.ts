@@ -1,11 +1,19 @@
 import { Request, Response } from 'express';
-import { PrismaClient, StudentStatus } from '@prisma/client';
+import { PrismaClient, StudentStatus, FeeStatus, FeeFrequency } from '@prisma/client';
 import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { maskAadhaar } from '../utils/verhoeff.js';
 
 const prisma = new PrismaClient();
 
-export const getStudents = async (req: Request, res: Response): Promise<void> => {
+// Helper to check sensitive data viewing permission
+const canViewSensitiveData = (req: AuthenticatedRequest): boolean => {
+  const permissions = req.user?.permissions || [];
+  const role = req.user?.role || '';
+  return permissions.includes('sensitive.view') || ['SUPER_ADMIN', 'DIRECTOR', 'PRINCIPAL'].includes(role);
+};
+
+export const getStudents = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string || '1', 10));
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit as string || '10', 10)));
@@ -14,21 +22,31 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
     const sectionId = req.query.sectionId as string;
     const academicYearId = req.query.academicYearId as string;
     const status = req.query.status as string;
+    const isHostel = req.query.isHostel as string;
 
     const where: any = {};
 
+    // Status filter - defaults to ACTIVE if status not specified or empty, but respects ALL or explicit filters
     if (status && status !== 'ALL') {
       where.status = status as StudentStatus;
+    } else if (!status) {
+      // Default to ACTIVE for standard views
+      where.status = StudentStatus.ACTIVE;
+    }
+
+    if (isHostel !== undefined && isHostel !== '') {
+      where.isHostelStudent = isHostel === 'true';
     }
 
     if (search) {
       where.OR = [
-        { admissionNumber: { contains: search } },
-        { firstName: { contains: search } },
-        { lastName: { contains: search } },
+        { admissionNumber: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
         { aadhaarNumber: { contains: search } },
         { parents: { some: { parent: { primaryPhone: { contains: search } } } } },
-        { parents: { some: { parent: { fatherName: { contains: search } } } } },
+        { parents: { some: { parent: { fatherName: { contains: search, mode: 'insensitive' } } } } },
+        { parents: { some: { parent: { motherName: { contains: search, mode: 'insensitive' } } } } },
       ];
     }
 
@@ -41,6 +59,8 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
         }
       };
     }
+
+    const showFullSensitive = canViewSensitiveData(req);
 
     const [total, students] = await Promise.all([
       prisma.student.count({ where }),
@@ -80,7 +100,6 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
       const primaryParent = s.parents[0]?.parent;
       const currentAcademic = s.academicRecords[0];
 
-      // Calculate aggregate fee status
       let totalFee = 0;
       let totalPaid = 0;
       let totalPending = 0;
@@ -101,13 +120,20 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
       return {
         id: s.id,
         admissionNumber: s.admissionNumber,
-        fullName: `${s.firstName} ${s.middleName ? s.middleName + ' ' : ''}${s.lastName}`,
+        fullName: `${s.firstName} ${s.middleName ? s.middleName + ' ' : ''}${s.lastName}`.trim(),
         firstName: s.firstName,
         lastName: s.lastName,
         photoUrl: s.photoUrl,
         gender: s.gender,
         dateOfBirth: s.dateOfBirth,
         status: s.status,
+        isHostelStudent: s.isHostelStudent,
+        hostelRoomNumber: s.hostelRoomNumber,
+        isNonAttending: s.isNonAttending,
+        // Aadhaar numbers masked if user lacks sensitive.view permission (Part B2)
+        aadhaarNumber: showFullSensitive ? s.aadhaarNumber : maskAadhaar(s.aadhaarNumber),
+        fatherAadhaarNumber: showFullSensitive ? s.fatherAadhaarNumber : maskAadhaar(s.fatherAadhaarNumber),
+        motherAadhaarNumber: showFullSensitive ? s.motherAadhaarNumber : maskAadhaar(s.motherAadhaarNumber),
         cancellationReason: s.cancellationReason,
         cancelledAt: s.cancelledAt,
         admissionDate: s.admissionDate,
@@ -145,7 +171,7 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-export const getStudentById = async (req: Request, res: Response): Promise<void> => {
+export const getStudentById = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const student = await prisma.student.findUnique({
@@ -174,6 +200,14 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
         },
         documents: {
           orderBy: { uploadedAt: 'desc' }
+        },
+        statusHistory: {
+          orderBy: { createdAt: 'desc' }
+        },
+        leavingCertificate: true,
+        feeWaivers: {
+          include: { studentFee: true },
+          orderBy: { waivedAt: 'desc' }
         }
       }
     });
@@ -183,7 +217,8 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Compute fee metrics
+    const showFullSensitive = canViewSensitiveData(req);
+
     let totalFee = 0;
     let totalPaid = 0;
     let totalPending = 0;
@@ -198,17 +233,32 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
       }
     });
 
+    // Mask sensitive fields if not permitted
+    const sanitizedStudent = {
+      ...student,
+      aadhaarNumber: showFullSensitive ? student.aadhaarNumber : maskAadhaar(student.aadhaarNumber),
+      fatherAadhaarNumber: showFullSensitive ? student.fatherAadhaarNumber : maskAadhaar(student.fatherAadhaarNumber),
+      motherAadhaarNumber: showFullSensitive ? student.motherAadhaarNumber : maskAadhaar(student.motherAadhaarNumber),
+      parents: student.parents.map(p => ({
+        ...p,
+        parent: {
+          ...p.parent,
+          fatherAadhaarNumber: showFullSensitive ? p.parent.fatherAadhaarNumber : maskAadhaar(p.parent.fatherAadhaarNumber),
+          motherAadhaarNumber: showFullSensitive ? p.parent.motherAadhaarNumber : maskAadhaar(p.parent.motherAadhaarNumber)
+        }
+      })),
+      feeSummary: {
+        totalFee,
+        paid: totalPaid,
+        pending: totalPending,
+        overdue: totalOverdue
+      },
+      schoolLeavingCertificates: student.leavingCertificate ? [student.leavingCertificate] : []
+    };
+
     res.json({
       success: true,
-      data: {
-        ...student,
-        feeSummary: {
-          totalFee,
-          paid: totalPaid,
-          pending: totalPending,
-          overdue: totalOverdue
-        }
-      }
+      data: sanitizedStudent
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -220,22 +270,74 @@ export const updateStudent = async (req: AuthenticatedRequest, res: Response): P
     const { id } = req.params;
     const data = req.body;
 
-    const updated = await prisma.student.update({
+    const student = await prisma.student.findUnique({
       where: { id },
-      data: {
-        firstName: data.firstName,
-        middleName: data.middleName || null,
-        lastName: data.lastName,
-        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
-        gender: data.gender,
-        bloodGroup: data.bloodGroup || null,
-        aadhaarNumber: data.aadhaarNumber || null,
-        address: data.address || null,
-        city: data.city || null,
-        state: data.state || null,
-        pincode: data.pincode || null,
-        emergencyPhone: data.emergencyPhone || null,
+      include: { academicRecords: true }
+    });
+
+    if (!student) {
+      res.status(404).json({ success: false, message: 'Student not found' });
+      return;
+    }
+
+    const wasHostel = student.isHostelStudent;
+    const isNowHostel = data.isHostelStudent !== undefined ? Boolean(data.isHostelStudent) : wasHostel;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.student.update({
+        where: { id },
+        data: {
+          firstName: data.firstName !== undefined ? data.firstName.trim() : undefined,
+          middleName: data.middleName !== undefined ? (data.middleName?.trim() || null) : undefined,
+          lastName: data.lastName !== undefined ? data.lastName.trim() : undefined,
+          dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
+          gender: data.gender,
+          bloodGroup: data.bloodGroup || null,
+          aadhaarNumber: data.aadhaarNumber || null,
+          fatherAadhaarNumber: data.fatherAadhaarNumber || null,
+          motherAadhaarNumber: data.motherAadhaarNumber || null,
+          photoUrl: data.photoUrl !== undefined ? data.photoUrl : undefined,
+          // Residence address
+          address: data.address || null,
+          city: data.city || null,
+          state: data.state || null,
+          pincode: data.pincode || null,
+          // Present address
+          sameAsResidence: data.sameAsResidence !== undefined ? Boolean(data.sameAsResidence) : undefined,
+          presentAddress: data.presentAddress || null,
+          presentCity: data.presentCity || null,
+          presentState: data.presentState || null,
+          presentPincode: data.presentPincode || null,
+          // Previous school details
+          isPreviouslyEnrolled: data.isPreviouslyEnrolled !== undefined ? Boolean(data.isPreviouslyEnrolled) : undefined,
+          previousSchoolName: data.previousSchoolName || null,
+          previousClassPassed: data.previousClassPassed || null,
+          previousMedium: data.previousMedium || null,
+          previousLeavingDate: data.previousLeavingDate ? new Date(data.previousLeavingDate) : null,
+          previousTcNumber: data.previousTcNumber || null,
+          previousTcDate: data.previousTcDate ? new Date(data.previousTcDate) : null,
+          emergencyPhone: data.emergencyPhone || null,
+          isHostelStudent: isNowHostel,
+          hostelRoomNumber: isNowHostel ? (data.hostelRoomNumber || student.hostelRoomNumber) : null,
+          hostelAdmissionDate: isNowHostel ? (data.hostelAdmissionDate ? new Date(data.hostelAdmissionDate) : (student.hostelAdmissionDate || new Date())) : null,
+          isNonAttending: data.isNonAttending !== undefined ? Boolean(data.isNonAttending) : undefined
+        }
+      });
+
+      // Update parent record if parent details provided
+      if (data.parentInfo && data.parentInfo.id) {
+        await tx.parent.update({
+          where: { id: data.parentInfo.id },
+          data: {
+            fatherName: data.parentInfo.fatherName || undefined,
+            motherName: data.parentInfo.motherName || undefined,
+            fatherAadhaarNumber: data.fatherAadhaarNumber || undefined,
+            motherAadhaarNumber: data.motherAadhaarNumber || undefined
+          }
+        });
       }
+
+      return u;
     });
 
     await logAudit({
@@ -244,7 +346,7 @@ export const updateStudent = async (req: AuthenticatedRequest, res: Response): P
       action: 'UPDATE_STUDENT',
       module: 'STUDENTS',
       recordId: id,
-      newData: updated,
+      newData: { ...updated, hostelStatusChanged: wasHostel !== isNowHostel },
       ipAddress: req.ip
     });
 
@@ -254,27 +356,172 @@ export const updateStudent = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+// =====================================================================
+// PART C3: STUDENT STATUS ACTIONS & LIFECYCLE (ACTIVE, INACTIVE, WITHDRAWN, CANCELLED)
+// =====================================================================
 export const updateStudentStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status: targetStatus, reason, effectiveDate, generateSlc } = req.body;
 
-    const updated = await prisma.student.update({
+    if (!targetStatus || !['ACTIVE', 'INACTIVE', 'WITHDRAWN', 'CANCELLED'].includes(targetStatus)) {
+      res.status(400).json({ success: false, message: 'Valid status is required (ACTIVE, INACTIVE, WITHDRAWN, CANCELLED).' });
+      return;
+    }
+
+    if (!reason || !reason.trim()) {
+      res.status(400).json({ success: false, message: 'Status change reason is mandatory.' });
+      return;
+    }
+
+    const effDate = effectiveDate ? new Date(effectiveDate) : new Date();
+    if (isNaN(effDate.getTime())) {
+      res.status(400).json({ success: false, message: 'Please provide a valid effective date.' });
+      return;
+    }
+
+    const student = await prisma.student.findUnique({
       where: { id },
-      data: { status: status as StudentStatus }
+      include: {
+        parents: { include: { parent: true } },
+        academicRecords: {
+          include: { class: true, section: true, academicYear: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        },
+        studentFees: {
+          where: { remainingAmount: { gt: 0 } }
+        }
+      }
+    });
+
+    if (!student) {
+      res.status(404).json({ success: false, message: 'Student not found.' });
+      return;
+    }
+
+    const currentStatus = student.status;
+
+    // Check transition rules
+    const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+      ACTIVE: ['INACTIVE', 'WITHDRAWN', 'CANCELLED'],
+      INACTIVE: ['ACTIVE', 'WITHDRAWN', 'CANCELLED'],
+      WITHDRAWN: ['ACTIVE', 'CANCELLED'],
+      CANCELLED: ['ACTIVE'] // Only Super Admin
+    };
+
+    if (!ALLOWED_TRANSITIONS[currentStatus]?.includes(targetStatus)) {
+      res.status(400).json({
+        success: false,
+        message: `Invalid status transition from ${currentStatus} to ${targetStatus}.`
+      });
+      return;
+    }
+
+    // Cancelled is final: can only be reactivated by SUPER_ADMIN
+    if (currentStatus === StudentStatus.CANCELLED) {
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Cancelled admission is final and can only be reactivated by a Super Admin with reason.'
+        });
+        return;
+      }
+    }
+
+    let generatedSlcRecord = null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // If WITHDRAWN with generateSlc requested
+      if (targetStatus === 'WITHDRAWN' && generateSlc) {
+        const parentRecord = student.parents[0]?.parent;
+        const academicRecord = student.academicRecords[0];
+        const currentYear = new Date().getFullYear();
+        const slcCount = await tx.schoolLeavingCertificate.count();
+        const certificateNumber = `SLC-${currentYear}-${(slcCount + 1).toString().padStart(4, '0')}`;
+
+        const totalDues = student.studentFees.reduce((sum, f) => sum + Number(f.remainingAmount), 0);
+
+        generatedSlcRecord = await tx.schoolLeavingCertificate.create({
+          data: {
+            certificateNumber,
+            studentId: student.id,
+            studentName: `${student.firstName} ${student.middleName ? student.middleName + ' ' : ''}${student.lastName}`.trim(),
+            photoUrl: student.photoUrl || null,
+            admissionNumber: student.admissionNumber,
+            fatherName: parentRecord?.fatherName || 'N/A',
+            motherName: parentRecord?.motherName || 'N/A',
+            dateOfBirth: student.dateOfBirth,
+            nationality: student.nationality || 'Indian',
+            category: student.category || 'General',
+            classAdmitted: academicRecord?.class?.name || 'Standard',
+            classLastStudied: academicRecord?.class?.name || 'Standard',
+            admissionDate: student.admissionDate,
+            leavingDate: effDate,
+            reasonForLeaving: reason.trim(),
+            feeDuesStatus: totalDues > 0 ? `Dues Pending: ₹${totalDues}` : 'All dues cleared',
+            conduct: 'Good',
+            remarks: `Withdrawn on request: ${reason.trim()}`,
+            issueDate: new Date(),
+            issuedById: req.user?.id || 'SYSTEM',
+            issuedByName: req.user?.fullName || 'Principal / Administrator',
+            reprintCount: 0
+          }
+        });
+      }
+
+      // Update student status
+      const u = await tx.student.update({
+        where: { id },
+        data: {
+          status: targetStatus as StudentStatus,
+          withdrawalDate: targetStatus === 'WITHDRAWN' ? effDate : undefined,
+          withdrawalReason: targetStatus === 'WITHDRAWN' ? reason.trim() : undefined,
+          cancellationReason: targetStatus === 'CANCELLED' ? reason.trim() : undefined,
+          cancelledAt: targetStatus === 'CANCELLED' ? effDate : undefined
+        }
+      });
+
+      // Record in status history table (timeline)
+      await tx.studentStatusHistory.create({
+        data: {
+          studentId: id,
+          fromStatus: currentStatus,
+          toStatus: targetStatus as StudentStatus,
+          reason: reason.trim(),
+          changedById: req.user?.id || null,
+          changedByName: req.user?.fullName || 'Administrator',
+          effectiveDate: effDate
+        }
+      });
+
+      return u;
     });
 
     await logAudit({
       userId: req.user?.id,
       userName: req.user?.fullName,
-      action: 'UPDATE_STATUS',
+      action: 'UPDATE_STUDENT_STATUS',
       module: 'STUDENTS',
       recordId: id,
-      newData: { status },
+      newData: {
+        previousStatus: currentStatus,
+        newStatus: targetStatus,
+        effectiveDate: effDate,
+        reason: reason.trim(),
+        slcGenerated: Boolean(generatedSlcRecord)
+      },
       ipAddress: req.ip
     });
 
-    res.json({ success: true, message: 'Student status updated successfully', data: updated });
+    res.json({
+      success: true,
+      message: `Student status successfully changed from ${currentStatus} to ${targetStatus}.`,
+      data: {
+        student: updated,
+        slc: generatedSlcRecord
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
+
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -115,9 +118,10 @@ async function ensureMySqlRunning(): Promise<boolean> {
     const hasUserTable = tableCheck.includes('1');
     if (!hasUserTable) {
       console.log('🌱 Schema tables missing in MySQL. Synchronizing schema via Prisma...');
-      execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
+      const dbUrl = process.env.DATABASE_URL || 'mysql://school_user:SchoolPass123%21@127.0.0.1:3306/school_management';
+      execSync(`DATABASE_URL="${dbUrl}" npx prisma db push --skip-generate`, { stdio: 'inherit' });
       console.log('🌱 Populating initial database seed data...');
-      execSync('npx tsx prisma/seed.ts', { stdio: 'inherit' });
+      execSync(`DATABASE_URL="${dbUrl}" npx tsx prisma/seed.ts`, { stdio: 'inherit' });
       console.log('✅ MySQL schema synchronized and seeded successfully.');
     } else {
       console.log('✅ MySQL tables and seed data verified.');
@@ -139,7 +143,10 @@ function ensurePortFree(port: number): Promise<void> {
 }
 
 async function startServer() {
-  await ensureMySqlRunning();
+  const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+  if (!isPostgres) {
+    await ensureMySqlRunning();
+  }
 
   const { default: apiRouter } = await import('./backend/routes/api.js');
   const { config } = await import('./backend/config/index.js');
@@ -167,7 +174,7 @@ async function startServer() {
     res.json({
       status: 'UP',
       timestamp: new Date().toISOString(),
-      database: 'MySQL 8 (MariaDB 10.11)',
+      database: isPostgres ? 'PostgreSQL (Supabase)' : 'MySQL 8 (MariaDB 10.11)',
       orm: 'Prisma 5.22.0'
     });
   });
