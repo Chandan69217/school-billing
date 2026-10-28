@@ -27,7 +27,8 @@ import {
   Camera,
   RefreshCw,
   HelpCircle,
-  Award
+  Award,
+  Bus
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { apiClient } from '../api/client.js';
@@ -75,6 +76,7 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
   const [classes, setClasses] = useState<any[]>([]);
   const [availableSections, setAvailableSections] = useState<any[]>([]);
   const [feeStructures, setFeeStructures] = useState<any[]>([]);
+  const [transportRoutes, setTransportRoutes] = useState<any[]>([]);
 
   // Session Manager modal state
   const [createEditModalOpen, setCreateEditModalOpen] = useState(false);
@@ -112,7 +114,13 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
     photoUrl: '',
     isHostelStudent: false,
     hostelRoomNumber: '',
-    hostelAdmissionDate: new Date().toISOString().split('T')[0]
+    hostelAdmissionDate: new Date().toISOString().split('T')[0],
+    // Transport fields
+    usesTransport: false,
+    transportRouteId: '',
+    transportStopId: '',
+    transportServiceType: 'TWO_WAY',
+    transportPickupPoint: ''
   });
 
   // Photo upload states
@@ -364,10 +372,15 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
   // Fetch classes and academic years (includeArchived for SessionManager, but filter active for admission dropdown)
   const fetchMetadata = async () => {
     try {
-      const [yearsRes, classesRes] = await Promise.all([
+      const [yearsRes, classesRes, routesRes] = await Promise.all([
         apiClient.get('/academic-years?includeArchived=true'),
-        apiClient.get('/classes')
+        apiClient.get('/classes'),
+        apiClient.get('/transport/routes').catch(() => ({ data: { success: false, data: [] } }))
       ]);
+
+      if (routesRes.data?.success) {
+        setTransportRoutes(routesRes.data.data.filter((r: any) => r.isActive));
+      }
 
       if (yearsRes.data?.success) {
         const allSessions = yearsRes.data.data;
@@ -913,7 +926,12 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                       photoUrl: '',
                       isHostelStudent: false,
                       hostelRoomNumber: '',
-                      hostelAdmissionDate: new Date().toISOString().split('T')[0]
+                      hostelAdmissionDate: new Date().toISOString().split('T')[0],
+                      usesTransport: false,
+                      transportRouteId: '',
+                      transportStopId: '',
+                      transportServiceType: 'TWO_WAY',
+                      transportPickupPoint: ''
                     });
                     setParentInfo({
                       fatherName: '',
@@ -1969,6 +1987,145 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ onOpenFeeCollect
                           </button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* School Transport Facility Option */}
+                    <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/30 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-amber-100 text-amber-700">
+                            <Bus className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-900">School Transport Facility</div>
+                            <div className="text-[11px] text-slate-500">Does the student require school bus / van transport?</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStudentInfo(prev => ({
+                              ...prev,
+                              usesTransport: false,
+                              transportRouteId: '',
+                              transportStopId: '',
+                              transportPickupPoint: ''
+                            }))}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                              !studentInfo.usesTransport
+                                ? 'bg-white text-slate-800 shadow-2xs border border-slate-300'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            No
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const firstRoute = transportRoutes[0];
+                              const firstStop = firstRoute?.stops?.[0];
+                              setStudentInfo(prev => ({
+                                ...prev,
+                                usesTransport: true,
+                                transportRouteId: prev.transportRouteId || firstRoute?.id || '',
+                                transportStopId: prev.transportStopId || firstStop?.id || '',
+                                transportServiceType: prev.transportServiceType || 'TWO_WAY'
+                              }));
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                              studentInfo.usesTransport
+                                ? 'bg-amber-600 text-white shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            Yes (Avails Transport)
+                          </button>
+                        </div>
+                      </div>
+
+                      {studentInfo.usesTransport && (
+                        <div className="pt-3 border-t border-amber-200/70 space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Transport Route <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <select
+                                value={studentInfo.transportRouteId}
+                                onChange={(e) => {
+                                  const rId = e.target.value;
+                                  const selR = transportRoutes.find(r => r.id === rId);
+                                  setStudentInfo(prev => ({
+                                    ...prev,
+                                    transportRouteId: rId,
+                                    transportStopId: selR?.stops?.[0]?.id || ''
+                                  }));
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-amber-500 focus:outline-hidden"
+                              >
+                                {transportRoutes.length === 0 ? (
+                                  <option value="">No active routes configured</option>
+                                ) : (
+                                  transportRoutes.map((r: any) => (
+                                    <option key={r.id} value={r.id}>
+                                      {r.code} - {r.name} ({r.stops?.length || 0} stops)
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Designated Stop <span className="text-rose-500 font-bold">*</span>
+                              </label>
+                              <select
+                                value={studentInfo.transportStopId}
+                                onChange={(e) => setStudentInfo(prev => ({ ...prev, transportStopId: e.target.value }))}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-amber-500 focus:outline-hidden"
+                              >
+                                {(() => {
+                                  const selR = transportRoutes.find(r => r.id === studentInfo.transportRouteId);
+                                  const stops = selR?.stops || [];
+                                  if (stops.length === 0) return <option value="">No stops in this route</option>;
+                                  return stops.map((s: any) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name} - ₹{Number(s.monthlyFee).toLocaleString('en-IN')}/mo
+                                    </option>
+                                  ));
+                                })()}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Service Type
+                              </label>
+                              <select
+                                value={studentInfo.transportServiceType}
+                                onChange={(e) => setStudentInfo(prev => ({ ...prev, transportServiceType: e.target.value as any }))}
+                                className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-amber-500 focus:outline-hidden"
+                              >
+                                <option value="TWO_WAY">Two-way (Pick & Drop)</option>
+                                <option value="ONE_WAY">One-way Only</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-xs font-semibold text-slate-700 block mb-1">
+                              Pickup / Drop Point Landmark (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Near Shiv Mandir gate, Main Road"
+                              value={studentInfo.transportPickupPoint}
+                              onChange={(e) => setStudentInfo(prev => ({ ...prev, transportPickupPoint: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 py-2 px-3 text-xs focus:border-amber-500 focus:outline-hidden"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

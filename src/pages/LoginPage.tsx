@@ -1,165 +1,166 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  GraduationCap,
-  Lock,
-  User,
-  ArrowRight,
-  AlertCircle,
-  ShieldCheck,
-  Sparkles
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.js';
-import { SchoolLogo } from '../components/common/SchoolLogo.js';
+import { apiClient } from '../api/client.js';
+import {
+  DEFAULT_BRAND_CONFIG,
+  DEFAULT_SCHOOL_LOGO,
+  DEFAULT_SCHOOL_BG,
+  BrandConfig
+} from '../config/logo.js';
+import { BrandPanel, CompactBrandHeader } from '../components/auth/BrandPanel.js';
+import { LoginForm } from '../components/auth/LoginForm.js';
+import { ForgotPasswordForm } from '../components/auth/ForgotPasswordForm.js';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  const [username, setUsername] = useState('superadmin');
-  const [password, setPassword] = useState('Admin@123');
+  // Mode: 'login' | 'forgot'
+  const [mode, setMode] = useState<'login' | 'forgot'>(() => {
+    return searchParams.get('forgot') === '1' ? 'forgot' : 'login';
+  });
+
+  // Authentication & UI state
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Dynamic School Branding & Campus Backdrop
+  const [brandConfig, setBrandConfig] = useState<BrandConfig>(DEFAULT_BRAND_CONFIG);
+  const [logoUrl, setLogoUrl] = useState<string>(DEFAULT_SCHOOL_LOGO);
+  const [bgImageUrl, setBgImageUrl] = useState<string>(DEFAULT_SCHOOL_BG);
+
+  // Load school branding & sync page title + favicon
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchBranding = async () => {
+      try {
+        const res = await apiClient.get('/public/settings');
+        if (res.data?.success && res.data.data) {
+          const s = res.data.data;
+          if (isMounted) {
+            setBrandConfig(prev => ({
+              ...prev,
+              schoolName: s.schoolName || prev.schoolName,
+              tagline: s.tagline || prev.tagline,
+              motto: s.motto || prev.motto,
+              description: s.description || prev.description
+            }));
+            if (s.logoUrl) {
+              setLogoUrl(s.logoUrl);
+            }
+            if (s.bgImageUrl || s.coverImageUrl) {
+              setBgImageUrl(s.bgImageUrl || s.coverImageUrl);
+            }
+          }
+        }
+      } catch {
+        // Graceful fallback to DEFAULT_BRAND_CONFIG and DEFAULT_SCHOOL_BG
+      }
+    };
+
+    fetchBranding();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Update document title dynamically
+  useEffect(() => {
+    document.title = `Login | ${brandConfig.schoolName}`;
+  }, [brandConfig.schoolName]);
+
+  const handleLogin = async (credentials: { username: string; password: string; rememberMe?: boolean }) => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await login({ username, password });
+      const res = await login({
+        username: credentials.username,
+        password: credentials.password
+      });
+
       if (res.success) {
+        if (credentials.rememberMe) {
+          localStorage.setItem('pbps_remembered_username', credentials.username);
+        } else {
+          localStorage.removeItem('pbps_remembered_username');
+        }
         navigate('/');
       } else {
-        setErrorMessage(res.message || 'Login failed. Please verify credentials.');
+        setErrorMessage(res.message || 'Invalid username or password. Please try again.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Login failed');
+      const msg = err.response?.data?.message || err.message || 'Login failed. Please verify your credentials.';
+      setErrorMessage(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuickLogin = (user: string, pass: string) => {
-    setUsername(user);
-    setPassword(pass);
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-8 sm:py-12 px-3.5 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background Decorative Gradients */}
-      <div className="absolute -top-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen w-full flex flex-col lg:flex-row bg-slate-50 text-slate-900 overflow-x-hidden">
+      {/* Left Split-Screen Panel: Brand Showcase (Desktop >= 1024px) */}
+      <BrandPanel config={brandConfig} logoUrl={logoUrl} bgImageUrl={bgImageUrl} />
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
-        <div className="flex justify-center">
-          <div className="relative p-2.5 rounded-3xl bg-white/95 border border-white/40 shadow-2xl backdrop-blur-md">
-            <SchoolLogo size="xl" className="h-20 w-20 drop-shadow-lg" />
-          </div>
-        </div>
-        <h2 className="mt-4 text-center text-xl sm:text-2xl font-black tracking-tight text-white">
-          Pragya Bharti Public School
-        </h2>
-        <p className="mt-1 text-center text-xs text-slate-400 font-medium">
-          PBPS · Student Admission & Fee Management System
-        </p>
-      </div>
+      {/* Right Split-Screen Panel: Login / Forgot Password Form Container */}
+      <div className="flex-1 flex flex-col justify-center items-center px-4 sm:px-8 py-8 sm:py-12 lg:py-16 relative bg-gradient-to-b from-slate-50 via-white to-slate-50">
+        {/* Subtle decorative background accents */}
+        <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-50/60 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-sky-50/60 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="mt-5 sm:mt-6 sm:mx-auto sm:w-full sm:max-w-md relative z-10">
-        <div className="bg-slate-900/90 border border-slate-800 py-6 px-4 sm:py-8 sm:px-10 shadow-2xl rounded-2xl backdrop-blur-xl">
-          {errorMessage && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg bg-rose-950/50 border border-rose-800 p-3 text-xs text-rose-300">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-              <span>{errorMessage}</span>
-            </div>
+        <div className="w-full max-w-md relative z-10">
+          {/* Mobile/Tablet Compact Brand Header */}
+          <CompactBrandHeader config={brandConfig} logoUrl={logoUrl} />
+
+          {/* Form Card */}
+          {mode === 'login' ? (
+            <LoginForm
+              initialUsername={localStorage.getItem('pbps_remembered_username') || 'superadmin'}
+              initialPassword="Admin@123"
+              loading={loading}
+              errorMessage={errorMessage}
+              onLogin={handleLogin}
+              onForgotPasswordClick={() => {
+                setMode('forgot');
+                setErrorMessage(null);
+              }}
+              onClearError={() => setErrorMessage(null)}
+            />
+          ) : (
+            <ForgotPasswordForm
+              onBackToLogin={() => {
+                setMode('login');
+                setErrorMessage(null);
+              }}
+            />
           )}
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Email or Username
-              </label>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="superadmin"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800/80 py-2.5 sm:py-2 pl-9 pr-3 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
+          {/* Mobile/Tablet Feature Highlights (Below Card) */}
+          <div className="lg:hidden mt-8 pt-6 border-t border-slate-200/80">
+            <h3 className="text-xs font-bold text-slate-700 text-center uppercase tracking-wider mb-3">
+              School Billing & Accounting Features
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {brandConfig.features.slice(0, 2).map(feature => (
+                <div
+                  key={feature.id}
+                  className="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs text-left"
+                >
+                  <span className="text-xs font-semibold text-slate-800 block">
+                    {feature.title}
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5 leading-snug">
+                    {feature.description}
+                  </span>
+                </div>
+              ))}
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800/80 py-2.5 sm:py-2 pl-9 pr-3 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 min-h-[42px] sm:min-h-[auto]"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 disabled:opacity-50 transition-colors min-h-[44px]"
-            >
-              <span>{loading ? 'Authenticating...' : 'Sign In to Dashboard'}</span>
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </form>
-
-          {/* 1-Click Role Logins for Fast Review */}
-          <div className="mt-6 pt-5 border-t border-slate-800">
-            <span className="block text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider mb-2.5">
-              1-Click Instant Demo Logins
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('superadmin', 'Admin@123')}
-                className="p-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 text-slate-300 text-left transition-colors min-h-[44px]"
-              >
-                <div className="font-bold text-indigo-400">Super Admin</div>
-                <div className="text-[10px] text-slate-500">Full Access</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('accountant', 'Admin@123')}
-                className="p-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 text-slate-300 text-left transition-colors min-h-[44px]"
-              >
-                <div className="font-bold text-amber-400">Accountant</div>
-                <div className="text-[10px] text-slate-500">Fees & Receipts</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('principal', 'Admin@123')}
-                className="p-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 text-slate-300 text-left transition-colors min-h-[44px]"
-              >
-                <div className="font-bold text-emerald-400">Principal</div>
-                <div className="text-[10px] text-slate-500">Reports & Students</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('admission_staff', 'Staff@123')}
-                className="p-2.5 rounded-lg bg-slate-800/70 border border-slate-700/60 hover:bg-slate-800 text-slate-300 text-left transition-colors min-h-[44px]"
-              >
-                <div className="font-bold text-sky-400">Admission Staff</div>
-                <div className="text-[10px] text-slate-500">Enrollments</div>
-              </button>
-            </div>
+            <p className="text-[11px] text-slate-400 text-center mt-4">
+              © {new Date().getFullYear()} {brandConfig.schoolName}. All rights reserved.
+            </p>
           </div>
         </div>
       </div>

@@ -16,7 +16,7 @@ const canViewSensitiveData = (req: AuthenticatedRequest): boolean => {
 export const getStudents = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string || '1', 10));
-    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit as string || '10', 10)));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit as string || '10', 10)));
     const search = (req.query.search as string || '').trim();
     const classId = req.query.classId as string;
     const sectionId = req.query.sectionId as string;
@@ -40,13 +40,13 @@ export const getStudents = async (req: AuthenticatedRequest, res: Response): Pro
 
     if (search) {
       where.OR = [
-        { admissionNumber: { contains: search, mode: 'insensitive' } },
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
+        { admissionNumber: { contains: search } },
+        { firstName: { contains: search} },
+        { lastName: { contains: search } },
         { aadhaarNumber: { contains: search } },
         { parents: { some: { parent: { primaryPhone: { contains: search } } } } },
-        { parents: { some: { parent: { fatherName: { contains: search, mode: 'insensitive' } } } } },
-        { parents: { some: { parent: { motherName: { contains: search, mode: 'insensitive' } } } } },
+        { parents: { some: { parent: { fatherName: { contains: search } } } } },
+        { parents: { some: { parent: { motherName: { contains: search} } } } },
       ];
     }
 
@@ -130,6 +130,7 @@ export const getStudents = async (req: AuthenticatedRequest, res: Response): Pro
         isHostelStudent: s.isHostelStudent,
         hostelRoomNumber: s.hostelRoomNumber,
         isNonAttending: s.isNonAttending,
+        usesTransport: s.usesTransport,
         // Aadhaar numbers masked if user lacks sensitive.view permission (Part B2)
         aadhaarNumber: showFullSensitive ? s.aadhaarNumber : maskAadhaar(s.aadhaarNumber),
         fatherAadhaarNumber: showFullSensitive ? s.fatherAadhaarNumber : maskAadhaar(s.fatherAadhaarNumber),
@@ -208,6 +209,22 @@ export const getStudentById = async (req: AuthenticatedRequest, res: Response): 
         feeWaivers: {
           include: { studentFee: true },
           orderBy: { waivedAt: 'desc' }
+        },
+        transportAssignments: {
+          include: { route: true, stop: true },
+          orderBy: { createdAt: 'desc' }
+        },
+        transportHistory: {
+          include: { route: true, stop: true },
+          orderBy: { createdAt: 'desc' }
+        },
+        discountApplications: {
+          include: { discountRule: true },
+          orderBy: { createdAt: 'desc' }
+        },
+        storeSales: {
+          include: { items: { include: { item: true } }, returns: true },
+          orderBy: { createdAt: 'desc' }
         }
       }
     });

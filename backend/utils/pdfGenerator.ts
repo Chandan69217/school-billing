@@ -86,7 +86,7 @@ export interface ReportPdfPayload {
   sessionName?: string;
   generatedBy?: string;
   kpis?: Array<{ label: string; value: string }>;
-  columns: Array<{ header: string; key: string; width: number; align?: 'left' | 'center' | 'right' }>;
+  columns: Array<{ header: string; key: string; width: number; align?: 'left' | 'center' | 'right'; type?: string }>;
   rows: Array<Record<string, any>>;
   totals?: Record<string, any>;
 }
@@ -123,7 +123,13 @@ function drawHeader(
   contentWidth: number,
   isLandscape = false
 ): number {
-  const logoBuffer = getSchoolLogoBuffer(school.logoUrl);
+  const safeSchool = school || {
+    name: 'Pragya Bharti Public School',
+    address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+    phone: '+91 9430442800, +91 7247271212',
+    email: 'pragyabhartigayabih@gmail.com'
+  };
+  const logoBuffer = getSchoolLogoBuffer(safeSchool.logoUrl);
   const logoSize = isLandscape ? 48 : 54;
 
   // Render logo on left
@@ -145,25 +151,29 @@ function drawHeader(
   const textX = startX + logoSize + 14;
   const textWidth = contentWidth - logoSize - 14;
 
+  const schoolName = (safeSchool.name || 'Pragya Bharti Public School').toUpperCase();
   doc.fillColor('#0f172a').fontSize(isLandscape ? 15 : 17).font('Helvetica-Bold');
-  doc.text(school.name.toUpperCase(), textX, startY + 2, { width: textWidth, align: 'left' });
+  doc.text(schoolName, textX, startY + 2, { width: textWidth, align: 'left' });
 
   let curY = startY + (isLandscape ? 19 : 22);
 
-  if (school.tagline) {
+  if (safeSchool.tagline) {
     doc.fillColor('#d97706').fontSize(isLandscape ? 8.5 : 9).font('Helvetica-Bold');
-    doc.text(school.tagline, textX, curY, { width: textWidth, align: 'left' });
+    doc.text(safeSchool.tagline, textX, curY, { width: textWidth, align: 'left' });
     curY += 12;
   }
 
   doc.fillColor('#475569').fontSize(isLandscape ? 7.5 : 8).font('Helvetica');
-  const metaLine = `${school.address} | Phone: ${school.phone} | Email: ${school.email}`;
+  const addressStr = safeSchool.address || 'Patna, Bihar';
+  const phoneStr = safeSchool.phone || 'N/A';
+  const emailStr = safeSchool.email || 'pragyabhartigayabih@gmail.com';
+  const metaLine = `${addressStr} | Phone: ${phoneStr} | Email: ${emailStr}`;
   doc.text(metaLine, textX, curY, { width: textWidth, align: 'left' });
   curY += 11;
 
-  if (school.affiliationNumber) {
+  if (safeSchool.affiliationNumber) {
     doc.fillColor('#64748b').fontSize(7.5).font('Helvetica-Oblique');
-    doc.text(`CBSE Affiliation / Registration No: ${school.affiliationNumber}`, textX, curY, {
+    doc.text(`CBSE Affiliation / Registration No: ${safeSchool.affiliationNumber}`, textX, curY, {
       width: textWidth,
       align: 'left'
     });
@@ -187,12 +197,35 @@ export function generateUnifiedReceiptPdf(
   return new Promise((resolve, reject) => {
     try {
       const isCompact = options.compact === true;
+      const school = data?.school || {
+        name: 'Pragya Bharti Public School',
+        address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+        phone: '+91 9430442800, +91 7247271212',
+        email: 'pragyabhartigayabih@gmail.com'
+      };
+      const student = data?.student || {
+        name: 'Student',
+        admissionNumber: 'N/A',
+        className: 'Class'
+      };
+      const receiptNumber = data?.receiptNumber || 'RCP-PENDING';
+      const items = Array.isArray(data?.items) && data.items.length > 0 ? data.items : [
+        { title: 'Fee Payment', amount: Number(data?.paidAmount) || 0 }
+      ];
+      const totalAmount = Number(data?.totalAmount) || 0;
+      const previousBalance = Number(data?.previousBalance) || 0;
+      const paidAmount = Number(data?.paidAmount) || 0;
+      const remainingBalance = Number(data?.remainingBalance) || 0;
+      const paymentDate = data?.paymentDate || new Date().toLocaleDateString('en-IN');
+      const paymentMethod = data?.paymentMethod || 'CASH';
+      const academicYear = data?.academicYear || '2026-27';
+
       const doc = new PDFDocument({
         size: isCompact ? 'A5' : 'A4',
         margin: 28,
         info: {
-          Title: `Fee Receipt - ${data.receiptNumber}`,
-          Author: data.school.name,
+          Title: `Fee Receipt - ${receiptNumber}`,
+          Author: school.name,
           Subject: 'Official Fee Payment Receipt'
         }
       });
@@ -200,6 +233,7 @@ export function generateUnifiedReceiptPdf(
       const buffers: Buffer[] = [];
       doc.on('data', buffers.push.bind(buffers));
       doc.on('end', () => resolve(Buffer.concat(buffers)));
+      doc.on('error', (err) => reject(err));
 
       const pageWidth = doc.page.width;
       const pageHeight = doc.page.height;
@@ -213,8 +247,8 @@ export function generateUnifiedReceiptPdf(
         .lineWidth(0.5).strokeColor('#cbd5e1').stroke();
 
       // Watermark
-      const isDuplicate = data.isDuplicate || (data.reprintCount && data.reprintCount > 0);
-      const logoBuf = getSchoolLogoBuffer(data.school.logoUrl);
+      const isDuplicate = Boolean(data?.isDuplicate || (data?.reprintCount && data.reprintCount > 0));
+      const logoBuf = getSchoolLogoBuffer(school.logoUrl);
 
       doc.save();
       if (logoBuf && logoBuf.length > 0) {
@@ -233,7 +267,7 @@ export function generateUnifiedReceiptPdf(
       doc.restore();
 
       // Draw School Header
-      let y = drawHeader(doc, data.school, margin, margin, contentWidth, false);
+      let y = drawHeader(doc, school, margin, margin, contentWidth, false);
 
       // Title Banner
       const titleHeight = 22;
@@ -254,11 +288,11 @@ export function generateUnifiedReceiptPdf(
       doc.text('PAYMENT MODE', margin + colW * 3 + 6, y + 4);
 
       doc.fillColor('#0f172a').fontSize(8.5).font('Helvetica-Bold');
-      doc.text(data.receiptNumber, margin + 6, y + 14);
-      doc.font('Helvetica').text(data.paymentDate, margin + colW + 6, y + 14);
-      doc.text(data.academicYear, margin + colW * 2 + 6, y + 14);
+      doc.text(receiptNumber, margin + 6, y + 14);
+      doc.font('Helvetica').text(paymentDate, margin + colW + 6, y + 14);
+      doc.text(academicYear, margin + colW * 2 + 6, y + 14);
       doc.text(
-        `${data.paymentMethod}${data.transactionRef ? ` (${data.transactionRef})` : ''}`,
+        `${paymentMethod}${data?.transactionRef ? ` (${data.transactionRef})` : ''}`,
         margin + colW * 3 + 6,
         y + 14,
         { width: colW - 10, ellipsis: true }
@@ -273,30 +307,30 @@ export function generateUnifiedReceiptPdf(
       doc.fillColor('#0f172a').fontSize(8).font('Helvetica-Bold');
 
       doc.text('Student Name:', margin + 8, y + 6);
-      doc.font('Helvetica').text(data.student.name, margin + 85, y + 6);
+      doc.font('Helvetica').text(student.name, margin + 85, y + 6);
 
       doc.font('Helvetica-Bold').text('Admission No:', margin + halfW + 8, y + 6);
-      doc.font('Helvetica').text(data.student.admissionNumber, margin + halfW + 90, y + 6);
+      doc.font('Helvetica').text(student.admissionNumber, margin + halfW + 90, y + 6);
 
       doc.font('Helvetica-Bold').text('Class & Section:', margin + 8, y + 20);
       doc.font('Helvetica').text(
-        `${data.student.className} (${data.student.sectionName || 'A'})${data.student.rollNumber ? ` · Roll: ${data.student.rollNumber}` : ''}`,
+        `${student.className || 'Class'} (${student.sectionName || 'A'})${student.rollNumber ? ` · Roll: ${student.rollNumber}` : ''}`,
         margin + 85,
         y + 20
       );
 
       doc.font('Helvetica-Bold').text('Student Category:', margin + halfW + 8, y + 20);
       doc.font('Helvetica').text(
-        data.student.isHostelStudent ? 'Hostel Resident' : 'Day Scholar',
+        student.isHostelStudent ? 'Hostel Resident' : 'Day Scholar',
         margin + halfW + 90,
         y + 20
       );
 
       doc.font('Helvetica-Bold').text('Parent / Guardian:', margin + 8, y + 34);
-      doc.font('Helvetica').text(data.student.fatherName || 'Parent / Guardian', margin + 85, y + 34);
+      doc.font('Helvetica').text(student.fatherName || 'Parent / Guardian', margin + 85, y + 34);
 
       doc.font('Helvetica-Bold').text('Contact Phone:', margin + halfW + 8, y + 34);
-      doc.font('Helvetica').text(data.student.phone || 'N/A', margin + halfW + 90, y + 34);
+      doc.font('Helvetica').text(student.phone || 'N/A', margin + halfW + 90, y + 34);
       y += 56;
 
       // Fee Breakdown Table Header
@@ -319,7 +353,7 @@ export function generateUnifiedReceiptPdf(
 
       // Table Rows
       doc.font('Helvetica').fontSize(8);
-      data.items.forEach((item, index) => {
+      items.forEach((item, index) => {
         const rowHeight = 19;
         const isEven = index % 2 === 0;
 
@@ -334,13 +368,13 @@ export function generateUnifiedReceiptPdf(
         doc.text((index + 1).toString(), colX + 4, y + 5, { width: tableHeaders[0].width - 8, align: 'center' });
         colX += tableHeaders[0].width;
 
-        doc.text(item.title, colX + 4, y + 5, { width: tableHeaders[1].width - 8, align: 'left' });
+        doc.text(item.title || 'Fee Head', colX + 4, y + 5, { width: tableHeaders[1].width - 8, align: 'left' });
         colX += tableHeaders[1].width;
 
         doc.text(item.month || 'Current Session', colX + 4, y + 5, { width: tableHeaders[2].width - 8, align: 'center' });
         colX += tableHeaders[2].width;
 
-        doc.font('Helvetica-Bold').text(formatCurrency(item.amount), colX + 4, y + 5, {
+        doc.font('Helvetica-Bold').text(formatCurrency(Number(item.amount) || 0), colX + 4, y + 5, {
           width: tableHeaders[3].width - 8,
           align: 'right'
         });
@@ -351,7 +385,7 @@ export function generateUnifiedReceiptPdf(
 
       // Amount in Words Bar
       y += 6;
-      const words = numberToIndianWords(data.paidAmount);
+      const words = numberToIndianWords(paidAmount);
       doc.rect(margin, y, contentWidth, 20).fillColor('#e0e7ff').fill();
       doc.rect(margin, y, contentWidth, 20).lineWidth(0.5).strokeColor('#c7d2fe').stroke();
       doc.fillColor('#1e1b4b').fontSize(7.5).font('Helvetica-Bold');
@@ -367,21 +401,21 @@ export function generateUnifiedReceiptPdf(
 
       doc.fontSize(8).fillColor('#475569').font('Helvetica');
       doc.text('Total Scheduled Dues:', cardX + 10, y + 8);
-      doc.text(formatCurrency(data.totalAmount), cardX + 110, y + 8, { width: 110, align: 'right' });
+      doc.text(formatCurrency(totalAmount), cardX + 110, y + 8, { width: 110, align: 'right' });
 
       doc.text('Previous Outstanding:', cardX + 10, y + 24);
-      doc.text(formatCurrency(data.previousBalance), cardX + 110, y + 24, { width: 110, align: 'right' });
+      doc.text(formatCurrency(previousBalance), cardX + 110, y + 24, { width: 110, align: 'right' });
 
       // Highlight Amount Paid
       doc.rect(cardX, y + 38, cardW, 22).fillColor('#4338ca').fill();
       doc.fillColor('#ffffff').font('Helvetica-Bold');
       doc.text('NET AMOUNT RECEIVED:', cardX + 10, y + 44);
-      doc.text(formatCurrency(data.paidAmount), cardX + 110, y + 44, { width: 110, align: 'right' });
+      doc.text(formatCurrency(paidAmount), cardX + 110, y + 44, { width: 110, align: 'right' });
 
       // Balance Remaining
-      doc.fillColor(data.remainingBalance > 0 ? '#b91c1c' : '#15803d').font('Helvetica-Bold');
-      doc.text(data.remainingBalance > 0 ? 'Dues Outstanding:' : 'Current Balance:', cardX + 10, y + 66);
-      doc.text(formatCurrency(data.remainingBalance), cardX + 110, y + 66, { width: 110, align: 'right' });
+      doc.fillColor(remainingBalance > 0 ? '#b91c1c' : '#15803d').font('Helvetica-Bold');
+      doc.text(remainingBalance > 0 ? 'Dues Outstanding:' : 'Current Balance:', cardX + 10, y + 66);
+      doc.text(formatCurrency(remainingBalance), cardX + 110, y + 66, { width: 110, align: 'right' });
 
       // Payment Terms / Instructions on Left
       const termsW = contentWidth - cardW - 14;
@@ -399,18 +433,18 @@ export function generateUnifiedReceiptPdf(
         .moveTo(margin + contentWidth - 170, sigY).lineTo(margin + contentWidth - 10, sigY).stroke();
 
       doc.fillColor('#0f172a').fontSize(8).font('Helvetica-Bold');
-      doc.text(data.collectedBy || 'Cashier / Bursar', margin + 10, sigY + 5);
+      doc.text(data?.collectedBy || 'Cashier / Bursar', margin + 10, sigY + 5);
       doc.font('Helvetica').fontSize(7).fillColor('#64748b').text('Collected & Verified By', margin + 10, sigY + 16);
 
       doc.fillColor('#0f172a').fontSize(8).font('Helvetica-Bold');
-      doc.text(data.school.authorizedSignatory || 'Authorized Officer', margin + contentWidth - 170, sigY + 5, { align: 'right', width: 160 });
-      doc.font('Helvetica').fontSize(7).fillColor('#64748b').text(`For ${data.school.name}`, margin + contentWidth - 170, sigY + 16, { align: 'right', width: 160 });
+      doc.text(school.authorizedSignatory || 'Authorized Officer', margin + contentWidth - 170, sigY + 5, { align: 'right', width: 160 });
+      doc.font('Helvetica').fontSize(7).fillColor('#64748b').text(`For ${school.name}`, margin + contentWidth - 170, sigY + 16, { align: 'right', width: 160 });
 
       // Page Footer Bar
       const footerY = pageHeight - margin - 12;
       doc.fillColor('#94a3b8').fontSize(6.8).font('Helvetica')
         .text(
-          `${data.school.receiptFooter || 'This is a computer generated fee receipt. Pragya Bharti Public School.'} · Page 1 of 1 · Generated on ${new Date().toLocaleString('en-IN')}`,
+          `${school.receiptFooter || 'This is a computer generated fee receipt. Pragya Bharti Public School.'} · Page 1 of 1 · Generated on ${new Date().toLocaleString('en-IN')}`,
           margin,
           footerY,
           { align: 'center', width: contentWidth }
@@ -706,7 +740,19 @@ export function generateReportPdf(data: ReportPdfPayload): Promise<Buffer> {
         let colX = margin;
         scaledCols.forEach(col => {
           const rawVal = row[col.key];
-          let valStr = rawVal === null || rawVal === undefined ? '' : String(rawVal);
+          let valStr = '';
+          if (rawVal !== null && rawVal !== undefined) {
+            const isCurrency = (col as any).type === 'currency' || col.header.includes('(₹)') || (typeof rawVal === 'number' && ['amount', 'billed', 'collected', 'dues', 'pending', 'total', 'totalBilled', 'totalPaid', 'totalDue', 'totalAmount'].includes(col.key));
+            if (isCurrency && typeof rawVal === 'number') {
+              valStr = `Rs. ${rawVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            } else if ((col as any).type === 'number' && typeof rawVal === 'number') {
+              valStr = rawVal.toLocaleString('en-IN');
+            } else if ((col as any).type === 'date' && rawVal) {
+              valStr = String(rawVal).split('T')[0];
+            } else {
+              valStr = String(rawVal);
+            }
+          }
 
           doc.text(valStr, colX + 4, y + 4, {
             width: col.width - 8,
@@ -733,8 +779,22 @@ export function generateReportPdf(data: ReportPdfPayload): Promise<Buffer> {
         doc.fillColor('#0f172a').fontSize(8).font('Helvetica-Bold');
         let colX = margin;
         scaledCols.forEach((col, idx) => {
-          const val = data.totals![col.key] || (idx === 0 ? 'TOTAL' : '');
-          doc.text(String(val), colX + 4, y + 5, {
+          let rawTot = data.totals![col.key];
+          let valStr = '';
+          if (rawTot !== undefined && rawTot !== null) {
+            const isCurrency = (col as any).type === 'currency' || col.header.includes('(₹)') || (typeof rawTot === 'number' && ['amount', 'billed', 'collected', 'dues', 'pending', 'total', 'totalBilled', 'totalPaid', 'totalDue', 'totalAmount'].includes(col.key));
+            if (isCurrency && typeof rawTot === 'number') {
+              valStr = `Rs. ${rawTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            } else if (typeof rawTot === 'number') {
+              valStr = rawTot.toLocaleString('en-IN');
+            } else {
+              valStr = String(rawTot);
+            }
+          } else {
+            valStr = idx === 0 ? 'TOTAL' : '';
+          }
+
+          doc.text(valStr, colX + 4, y + 5, {
             width: col.width - 8,
             align: (col.align || 'left') as any
           });

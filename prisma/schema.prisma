@@ -67,25 +67,45 @@ enum FeeFrequency {
 // -------------------------------------------------------------
 
 model User {
-  id               String          @id @default(uuid())
-  email            String          @unique
-  username         String          @unique
-  passwordHash     String
-  fullName         String
-  phone            String?
-  avatarUrl        String?
-  role             RoleType        @default(STAFF)
-  isActive         Boolean         @default(true)
-  lastLoginAt      DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id                     String               @id @default(uuid())
+  email                  String               @unique
+  username               String               @unique
+  passwordHash           String
+  fullName               String
+  phone                  String?
+  avatarUrl              String?
+  role                   RoleType             @default(STAFF)
+  isActive               Boolean              @default(true)
+  mustChangePassword     Boolean              @default(false)
+  failedPasswordAttempts Int                  @default(0)
+  lockedUntil            DateTime?
+  tokenVersion           Int                  @default(1)
+  lastLoginAt            DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
 
-  paymentsCollected Payment[]      @relation("Collector")
-  notifications    Notification[]
+  paymentsCollected      Payment[]            @relation("Collector")
+  notifications          Notification[]
+  resetTokens            PasswordResetToken[]
 
   @@index([email])
   @@index([username])
   @@index([role])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
 }
 
 model Permission {
@@ -218,6 +238,7 @@ model Student {
   hostelRoomNumber    String?
   hostelAdmissionDate DateTime?
   isNonAttending      Boolean       @default(false)
+  usesTransport       Boolean       @default(false)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
@@ -230,6 +251,10 @@ model Student {
   feeWaivers         FeeWaiver[]
   leavingCertificate SchoolLeavingCertificate?
   statusHistory      StudentStatusHistory[]
+  transportAssignments StudentTransportAssignment[]
+  transportHistory     StudentTransportHistory[]
+  storeSales           StoreSale[]
+  discountApplications DiscountApplication[]
 
   @@index([admissionNumber])
   @@index([firstName, lastName])
@@ -572,38 +597,90 @@ model SchoolSettings {
   requireDiscountApproval Boolean @default(false)
   requireCustomFeeApproval Boolean @default(true)
   paymentModes       String   @default("Cash,UPI,Cheque,Bank Transfer,Card,Other")
+  // Transport Settings
+  transportPricingMode        String   @default("PER_STOP") // "PER_STOP", "PER_ROUTE"
+  transportServiceTypeEnabled Boolean  @default(false)
+  transportBillingMonths      String   @default("ALL") // "ALL" or comma-separated e.g. "4,5,6,7,8,9,10,11,12,1,2,3"
+
+  // Books & Uniform / Store Settings
+  storeReceiptPrefix          String   @default("BU")
+  storeStockTracking          Boolean  @default(false)
+  storeAllowWalkIn            Boolean  @default(false)
+  storeAllowAddToDues         Boolean  @default(false)
+
+  // Discount Settings
+  discountStackingMode        String   @default("BEST_ONLY") // "BEST_ONLY", "BLOCK_SECOND"
+  manualDiscountMaxLimit      Decimal  @default(500.00) @db.Decimal(10, 2)
   updatedAt          DateTime @updatedAt
 }
 
 model DiscountRule {
   id                  String   @id @default(uuid())
   name                String   // e.g. "Sibling Discount", "Staff Child", "Scholarship", "Custom"
+  code                String?  @unique
   type                String   // "PERCENTAGE", "FIXED"
   value               Decimal  @db.Decimal(10, 2)
-  applicableFeeHeads  String?  // comma-separated fee head names or null for all
+  applicableFeeHeads  String?  // comma-separated fee head names or "ALL"
+  applicableClasses   String?  // "ALL" or comma-separated class IDs
+  academicYearId      String?
+  validFrom           DateTime?
+  validTo             DateTime?
+  category            String   @default("General") // "Sibling", "Staff Ward", "Scholarship", "Merit", "Financial Aid", "Director's Discretion", "Custom"
+  frequency           String   @default("MONTHLY") // "ONE_TIME", "MONTHLY", "SELECTED_MONTHS"
+  selectedMonths      String?  // comma-separated integers "4,5,6"
+  maxCapPerStudent    Decimal? @db.Decimal(10, 2)
+  isStackable         Boolean  @default(false)
   requiresApproval    Boolean  @default(false)
+  remarks             String?  @db.Text
   isActive            Boolean  @default(true)
+  isDeleted           Boolean  @default(false)
+  deletedAt           DateTime?
+  deletedById         String?
+  deletedReason       String?  @db.Text
+  activeAssignmentsTreatment String? // "ENDED", "KEPT"
   description         String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+
+  applications        DiscountApplication[]
+
+  @@index([code])
+  @@index([category])
+  @@index([isActive])
+  @@index([isDeleted])
 }
 
 model DiscountApplication {
-  id             String    @id @default(uuid())
-  studentId      String
-  discountRuleId String?
-  discountName   String
-  amount         Decimal   @db.Decimal(10, 2)
-  reason         String?
-  status         String    @default("APPROVED") // "PENDING_APPROVAL", "APPROVED", "REJECTED"
-  appliedById    String
-  approvedById   String?
-  approvedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                  String    @id @default(uuid())
+  studentId           String
+  discountRuleId      String?
+  discountName        String
+  amount              Decimal   @db.Decimal(10, 2)
+  effectiveMonth      Int?
+  effectiveYear       Int?
+  endMonth            Int?
+  endYear             Int?
+  reason              String?   @db.Text
+  status              String    @default("APPROVED") // "PENDING_APPROVAL", "APPROVED", "REJECTED"
+  ruleSnapshot        String?   @db.Text
+  supportingDocumentUrl String?
+  isEnded             Boolean   @default(false)
+  endedAt             DateTime?
+  endedReason         String?   @db.Text
+  isDeleted           Boolean   @default(false)
+  appliedById         String
+  approvedById        String?
+  approvedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  student             Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  discountRule        DiscountRule? @relation(fields: [discountRuleId], references: [id])
 
   @@index([studentId])
+  @@index([discountRuleId])
   @@index([status])
+  @@index([isDeleted])
 }
 
 model CustomFeeRequest {
@@ -700,4 +777,239 @@ model StudentStatusHistory {
   @@index([studentId])
   @@index([effectiveDate])
 }
+
+// -------------------------------------------------------------
+// Part 1: Monthly Transportation Master & Student Assignments
+// -------------------------------------------------------------
+
+model TransportRoute {
+  id            String   @id @default(uuid())
+  code          String   @unique // e.g. "RT-01"
+  name          String   // e.g. "Route A - Manpur to Campus"
+  description   String?  @db.Text
+  vehicleNumber String?  // e.g. "BR-02-P-1234"
+  driverName    String?
+  driverPhone   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  stops         TransportStop[]
+  assignments   StudentTransportAssignment[]
+  history       StudentTransportHistory[]
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model TransportStop {
+  id            String   @id @default(uuid())
+  routeId       String
+  name          String   // e.g. "Buniadganj Chowk"
+  orderNumber   Int      @default(0)
+  monthlyFee    Decimal  @db.Decimal(10, 2)
+  oneWayFee     Decimal? @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  route         TransportRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  assignments   StudentTransportAssignment[]
+  history       StudentTransportHistory[]
+
+  @@unique([routeId, name])
+  @@index([routeId])
+  @@index([isActive])
+}
+
+model StudentTransportAssignment {
+  id              String         @id @default(uuid())
+  studentId       String
+  routeId         String
+  stopId          String
+  academicYearId  String?
+  serviceType     String         @default("TWO_WAY") // "TWO_WAY", "ONE_WAY"
+  startMonth      Int            // 1-12
+  startYear       Int
+  stopMonth       Int?           // 1-12
+  stopYear        Int?
+  pickupPoint     String?
+  monthlyFee      Decimal        @db.Decimal(10, 2)
+  isActive        Boolean        @default(true)
+  stopReason      String?        @db.Text
+  stoppedAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  student         Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  route           TransportRoute @relation(fields: [routeId], references: [id])
+  stop            TransportStop  @relation(fields: [stopId], references: [id])
+
+  @@index([studentId])
+  @@index([routeId])
+  @@index([stopId])
+  @@index([isActive])
+}
+
+model StudentTransportHistory {
+  id              String          @id @default(uuid())
+  studentId       String
+  routeId         String?
+  stopId          String?
+  action          String          // "ASSIGNED", "ROUTE_CHANGED", "STOP_CHANGED", "SERVICE_CHANGED", "STOPPED"
+  effectiveMonth  Int
+  effectiveYear   Int
+  monthlyFee      Decimal         @db.Decimal(10, 2)
+  serviceType     String          @default("TWO_WAY")
+  reason          String?         @db.Text
+  changedById     String?
+  changedByName   String?
+  createdAt       DateTime        @default(now())
+
+  student         Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  route           TransportRoute? @relation(fields: [routeId], references: [id])
+  stop            TransportStop?  @relation(fields: [stopId], references: [id])
+
+  @@index([studentId])
+  @@index([createdAt])
+}
+
+// -------------------------------------------------------------
+// Part 2: Books and Uniform Purchases Master & Transactions
+// -------------------------------------------------------------
+
+model StoreCategory {
+  id          String      @id @default(uuid())
+  name        String      @unique // "Books", "Uniform", "Stationery", "Other"
+  code        String      @unique // "BOOKS", "UNIFORM", "STATIONERY", "OTHER"
+  description String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  items       StoreItem[]
+
+  @@index([name])
+}
+
+model StoreItem {
+  id                String            @id @default(uuid())
+  name              String            // e.g. "Class V Book Set", "Shirt", "Trousers", "Tie"
+  sku               String?           @unique
+  categoryId        String
+  applicableClasses String?           @default("ALL") // "ALL" or comma-separated class IDs
+  isKit             Boolean           @default(false)
+  kitItemIds        String?           @db.Text
+  sizes             String?           // e.g. "28,30,32,34" or "S,M,L"
+  price             Decimal           @db.Decimal(10, 2)
+  costPrice         Decimal           @default(0.00) @db.Decimal(10, 2)
+  trackStock        Boolean           @default(false)
+  currentStock      Int               @default(0)
+  lowStockAlert     Int               @default(5)
+  isActive          Boolean           @default(true)
+  academicYearId    String?
+  description       String?           @db.Text
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  category          StoreCategory     @relation(fields: [categoryId], references: [id])
+  salesItems        StoreSaleItem[]
+  adjustments       StockAdjustment[]
+
+  @@index([categoryId])
+  @@index([isActive])
+}
+
+model StockAdjustment {
+  id             String    @id @default(uuid())
+  itemId         String
+  quantity       Int       // Positive (added) or negative (subtracted)
+  previousStock  Int
+  newStock       Int
+  reason         String    @db.Text
+  adjustedById   String?
+  adjustedByName String?
+  createdAt      DateTime  @default(now())
+
+  item           StoreItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([createdAt])
+}
+
+model StoreSale {
+  id                 String          @id @default(uuid())
+  receiptNumber      String          @unique // e.g. "BU-2026-0001"
+  studentId          String?
+  walkInName         String?
+  walkInPhone        String?
+  academicYearId     String?
+  totalAmount        Decimal         @db.Decimal(10, 2)
+  discountAmount     Decimal         @default(0.00) @db.Decimal(10, 2)
+  netAmount          Decimal         @db.Decimal(10, 2)
+  paymentMethod      PaymentMethod   @default(CASH)
+  transactionRef     String?
+  paymentStatus      PaymentStatus   @default(SUCCESS)
+  isAddedToDues      Boolean         @default(false)
+  studentFeeId       String?
+  notes              String?         @db.Text
+  isCancelled        Boolean         @default(false)
+  cancellationReason String?         @db.Text
+  cancelledAt        DateTime?
+  cancelledById      String?
+  soldById           String?
+  soldByName         String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  student            Student?        @relation(fields: [studentId], references: [id])
+  items              StoreSaleItem[]
+  returns            StoreReturn[]
+
+  @@index([receiptNumber])
+  @@index([studentId])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model StoreSaleItem {
+  id               String      @id @default(uuid())
+  saleId           String
+  itemId           String
+  itemName         String
+  categoryName     String
+  size             String?
+  quantity         Int
+  unitPrice        Decimal     @db.Decimal(10, 2)
+  discount         Decimal     @default(0.00) @db.Decimal(10, 2)
+  totalPrice       Decimal     @db.Decimal(10, 2)
+  returnedQuantity Int         @default(0)
+  createdAt        DateTime    @default(now())
+
+  sale             StoreSale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  item             StoreItem   @relation(fields: [itemId], references: [id])
+
+  @@index([saleId])
+  @@index([itemId])
+}
+
+model StoreReturn {
+  id             String    @id @default(uuid())
+  saleId         String
+  returnNumber   String    @unique // e.g. "RET-2026-0001"
+  saleItemId     String
+  quantity       Int
+  refundAmount   Decimal   @db.Decimal(10, 2)
+  reason         String    @db.Text
+  returnedById   String?
+  returnedByName String?
+  createdAt      DateTime  @default(now())
+
+  sale           StoreSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([returnNumber])
+  @@index([createdAt])
+}
+
 

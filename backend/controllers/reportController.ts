@@ -1098,18 +1098,26 @@ async function buildReportExportData(type: string, req: AuthenticatedRequest) {
 export const exportReportPdf = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { type } = req.params;
-    const reportData = await buildReportExportData(type, req);
+    const reportData: any = await buildReportExportData(type, req);
 
     const pdfBuffer = await generateReportPdf({
       school: reportData.school,
       title: reportData.title,
-      session: reportData.session,
+      sessionName: reportData.session,
       generatedBy: reportData.generatedBy,
-      summaryCards: reportData.summaryCards,
-      columns: reportData.pdfColumns,
-      rows: reportData.pdfRows,
-      totalsRow: reportData.pdfTotals,
-      footerNote: 'This is a computer generated analytical report. Pragya Bharti Public School.'
+      kpis: reportData.summaryCards,
+      columns: reportData.excelColumns.map((c: any) => ({
+        header: c.header,
+        key: c.key,
+        type: c.type,
+        width: Math.max((c.width || 14) * 6, 60),
+        align: c.type === 'currency' || c.type === 'number' ? 'right' : 'left'
+      })),
+      rows: reportData.excelData,
+      totals: reportData.excelTotalCols?.reduce((acc: any, k: string) => {
+        acc[k] = reportData.excelData.reduce((sum: number, r: any) => sum + (Number(r[k]) || 0), 0);
+        return acc;
+      }, {})
     });
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -1125,17 +1133,17 @@ export const exportReportPdf = async (req: AuthenticatedRequest, res: Response):
 export const exportReportExcel = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { type } = req.params;
-    const reportData = await buildReportExportData(type, req);
+    const reportData: any = await buildReportExportData(type, req);
 
     const excelBuffer = await generateStyledExcelReport({
+      school: reportData.school,
       title: reportData.title,
-      session: reportData.session,
+      sessionName: reportData.session,
       generatedBy: reportData.generatedBy,
-      summaryCards: reportData.summaryCards,
+      summaryMetrics: reportData.summaryCards,
       columns: reportData.excelColumns,
-      data: reportData.excelData,
-      totalColumns: reportData.excelTotalCols,
-      landscape: true
+      rows: reportData.excelData,
+      totalColumns: reportData.excelTotalCols
     });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

@@ -26,15 +26,44 @@ export const authenticateJwt = async (req: AuthenticatedRequest, res: Response, 
     const decoded = jwt.verify(token, config.jwtSecret) as UserPayload;
     
     let permissions = decoded.permissions || (decoded.role === 'SUPER_ADMIN' ? ['*'] : []);
+    let mustChangePassword = decoded.mustChangePassword || false;
+
     try {
-      // Dynamically fetch current role permissions from database for real-time enforcement
-      const rolePerms = await prisma.rolePermission.findMany({
-        where: { role: decoded.role as any },
-        select: { permissionCode: true }
+      const dbUser = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, isActive: true, tokenVersion: true, mustChangePassword: true, role: true }
       });
-      permissions = decoded.role === 'SUPER_ADMIN' ? ['*'] : rolePerms.map(rp => rp.permissionCode);
+
+      if (dbUser) {
+        if (!dbUser.isActive) {
+          res.status(403).json({
+            success: false,
+            message: 'Account has been deactivated. Please contact administrator.',
+            errorCode: 'ACCOUNT_DEACTIVATED'
+          });
+          return;
+        }
+
+        // Session invalidation check: if tokenVersion in JWT is less than current tokenVersion in DB
+        if (decoded.tokenVersion !== undefined && dbUser.tokenVersion > decoded.tokenVersion) {
+          res.status(401).json({
+            success: false,
+            message: 'Session has been invalidated due to password change. Please log in again.',
+            errorCode: 'SESSION_REVOKED'
+          });
+          return;
+        }
+
+        mustChangePassword = dbUser.mustChangePassword;
+
+        // Dynamically fetch current role permissions from database for real-time enforcement
+        const rolePerms = await prisma.rolePermission.findMany({
+          where: { role: dbUser.role },
+          select: { permissionCode: true }
+        });
+        permissions = dbUser.role === 'SUPER_ADMIN' ? ['*'] : rolePerms.map(rp => rp.permissionCode);
+      }
     } catch (dbErr) {
-      // If database is offline, preserve permissions from token or fallback defaults
       if (decoded.role === 'SUPER_ADMIN') {
         permissions = ['*'];
       }
@@ -42,7 +71,8 @@ export const authenticateJwt = async (req: AuthenticatedRequest, res: Response, 
 
     req.user = {
       ...decoded,
-      permissions
+      permissions,
+      mustChangePassword
     };
 
     next();

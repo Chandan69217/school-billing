@@ -61,8 +61,14 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
     name: '',
     code: '',
     frequency: 'MONTHLY',
-    description: ''
+    description: '',
+    defaultAmount: 0
   });
+
+  // Delete Fee Head state
+  const [headToDelete, setHeadToDelete] = useState<any | null>(null);
+  const [deletingHead, setDeletingHead] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
 
   // Discount rules
   const [discountRules, setDiscountRules] = useState<any[]>([]);
@@ -80,6 +86,8 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
   const [pendingFeesData, setPendingFeesData] = useState<any>({ fees: [], totalOutstanding: 0 });
   const [classFilter, setClassFilter] = useState('');
   const [hostelFilter, setHostelFilter] = useState('ALL');
+  const [transportFilter, setTransportFilter] = useState('ALL');
+  const [feeHeadFilter, setFeeHeadFilter] = useState('');
   const [loadingPending, setLoadingPending] = useState(false);
 
   // Monthly fee generation state
@@ -134,6 +142,8 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
       if (classFilter) params.append('classId', classFilter);
       if (selectedYearId) params.append('academicYearId', selectedYearId);
       if (hostelFilter !== 'ALL') params.append('isHostel', hostelFilter === 'HOSTEL' ? 'true' : 'false');
+      if (transportFilter !== 'ALL') params.append('usesTransport', transportFilter === 'TRANSPORT' ? 'true' : 'false');
+      if (feeHeadFilter) params.append('feeTypeId', feeHeadFilter);
 
       const res = await apiClient.get(`/fees/pending?${params.toString()}`);
       if (res.data?.success) {
@@ -160,28 +170,32 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
     if (activeTab === 'pending') {
       fetchPendingFees();
     }
-  }, [activeTab, classFilter, hostelFilter, selectedYearId]);
+  }, [activeTab, classFilter, hostelFilter, transportFilter, feeHeadFilter, selectedYearId]);
 
-  // Open Edit Structure for Class
+  // Open Edit Structure for Class (merges all configurable fee heads)
   const handleOpenEditClassStructure = (cls: any) => {
     const existing = feeStructures.find(s => s.classId === cls.id);
     setEditingClass(cls);
 
-    if (existing && existing.items?.length > 0) {
-      setStructureItems(existing.items.map((it: any) => ({
-        id: it.id,
-        feeTypeId: it.feeTypeId,
-        feeTypeName: it.feeType?.name,
-        componentName: it.componentName || it.feeType?.name,
-        amount: Number(it.amount),
-        frequency: it.frequency,
-        dueMonths: it.dueMonths || (it.dueMonth ? String(it.dueMonth) : ''),
-        appliesTo: it.appliesTo || 'ALL',
-        isActive: it.isActive !== undefined ? it.isActive : true
-      })));
-    } else {
-      // Build default template from available fee heads
-      const defaultItems = feeTypes.map(ft => ({
+    const existingItems = existing?.items || [];
+
+    // Ensure ALL active feeTypes are represented in the editor
+    const mergedItems = feeTypes.map(ft => {
+      const match = existingItems.find((it: any) => it.feeTypeId === ft.id);
+      if (match) {
+        return {
+          id: match.id,
+          feeTypeId: match.feeTypeId,
+          feeTypeName: ft.name,
+          componentName: match.componentName || ft.name,
+          amount: Number(match.amount),
+          frequency: match.frequency || ft.frequency,
+          dueMonths: match.dueMonths || (match.dueMonth ? String(match.dueMonth) : ''),
+          appliesTo: match.appliesTo || 'ALL',
+          isActive: match.isActive !== undefined ? Boolean(match.isActive) : true
+        };
+      }
+      return {
         feeTypeId: ft.id,
         feeTypeName: ft.name,
         componentName: ft.name,
@@ -189,10 +203,28 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
         frequency: ft.frequency,
         dueMonths: ft.code === 'TERM' ? '5,10' : '',
         appliesTo: ft.code === 'HOSTEL' ? 'HOSTEL_ONLY' : (ft.code === 'PROS' || ft.code === 'ADM' ? 'NEW_ADMISSION_ONLY' : 'ALL'),
-        isActive: true
-      }));
-      setStructureItems(defaultItems);
+        isActive: false // Default to inactive when newly introduced
+      };
+    });
+
+    // Also include any items that existed in database but might not be in feeTypes
+    for (const it of existingItems) {
+      if (!mergedItems.some(m => m.feeTypeId === it.feeTypeId)) {
+        mergedItems.push({
+          id: it.id,
+          feeTypeId: it.feeTypeId,
+          feeTypeName: it.feeType?.name || it.componentName,
+          componentName: it.componentName || it.feeType?.name,
+          amount: Number(it.amount),
+          frequency: it.frequency,
+          dueMonths: it.dueMonths || (it.dueMonth ? String(it.dueMonth) : ''),
+          appliesTo: it.appliesTo || 'ALL',
+          isActive: it.isActive !== undefined ? Boolean(it.isActive) : true
+        });
+      }
     }
+
+    setStructureItems(mergedItems);
   };
 
   const handleSaveClassStructure = async () => {
@@ -210,12 +242,12 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
           frequency: it.frequency,
           dueMonths: it.dueMonths || null,
           appliesTo: it.appliesTo,
-          isActive: it.isActive
+          isActive: Boolean(it.isActive)
         }))
       });
 
       if (res.data?.success) {
-        toast.success(`Fee structure saved for ${editingClass.name}`);
+        toast.success(`Fee structure updated for ${editingClass.name}`);
         setEditingClass(null);
         fetchFeeStructures();
       } else {
@@ -256,13 +288,39 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
     try {
       const res = await apiClient.post('/fee-types', newHead);
       if (res.data?.success) {
-        toast.success(`Fee head '${newHead.name}' created successfully`);
+        toast.success(res.data.message || `Fee head '${newHead.name}' created`);
         setShowAddHeadModal(false);
-        setNewHead({ name: '', code: '', frequency: 'MONTHLY', description: '' });
-        fetchMetadata();
+        setNewHead({ name: '', code: '', frequency: 'MONTHLY', description: '', defaultAmount: 0 });
+        await fetchMetadata();
+        await fetchFeeStructures();
       }
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to create fee head');
+    }
+  };
+
+  const handleDeleteFeeHead = async (force: boolean = false) => {
+    if (!headToDelete) return;
+    setDeletingHead(true);
+    setDeleteNotice(null);
+    try {
+      const res = await apiClient.delete(`/fee-types/${headToDelete.id}${force ? '?force=true' : ''}`);
+      if (res.data?.success) {
+        toast.success(res.data.message || 'Fee head deleted successfully');
+        setHeadToDelete(null);
+        await fetchMetadata();
+        await fetchFeeStructures();
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Failed to delete fee head';
+      if (err.response?.data?.requiresConfirmation) {
+        setDeleteNotice(msg);
+      } else {
+        toast.error(msg);
+        setHeadToDelete(null);
+      }
+    } finally {
+      setDeletingHead(false);
     }
   };
 
@@ -434,6 +492,9 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
               const termItem = items.find((i: any) => i.componentName === 'Term Fee' || i.feeType?.code === 'TERM');
               const hostelItem = items.find((i: any) => i.componentName === 'Hostel Fee' || i.feeType?.code === 'HOSTEL');
 
+              const standardCodes = ['TUIT', 'COMP', 'PROS', 'ADM', 'TERM', 'HOSTEL'];
+              const customActiveItems = items.filter((i: any) => i.isActive && !standardCodes.includes(i.feeType?.code));
+              const inactiveItems = items.filter((i: any) => !i.isActive);
               const monthlyTotal = (Number(tuitionItem?.amount || 0) + Number(compItem?.amount || 0));
 
               return (
@@ -509,12 +570,45 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                           </span>
                         </div>
                       </div>
+
+                      {/* Additional Active Configurable Fee Heads */}
+                      {customActiveItems.length > 0 && (
+                        <div className="pt-1 border-t border-slate-100 space-y-1.5">
+                          <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">
+                            Additional Active Heads
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {customActiveItems.map((cIt: any, cIdx: number) => (
+                              <div key={cIdx} className="p-1.5 rounded-lg bg-indigo-50/60 border border-indigo-100/80 flex items-center justify-between">
+                                <span className="font-medium text-slate-700 truncate max-w-[110px]" title={cIt.componentName || cIt.feeType?.name}>
+                                  {cIt.componentName || cIt.feeType?.name}
+                                </span>
+                                <span className="font-mono font-bold text-indigo-800">
+                                  ₹{Number(cIt.amount).toLocaleString()}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-medium">
-                    <span>Active heads: {items.filter((i: any) => i.isActive).length}</span>
-                    <span className="text-emerald-600 font-bold">Synchronized</span>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-medium">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                        <Check className="h-3 w-3" />
+                        {items.filter((i: any) => i.isActive).length} Active
+                      </span>
+                      {inactiveItems.length > 0 && (
+                        <span className="text-slate-500 bg-slate-100 border border-slate-200/60 px-2 py-0.5 rounded-full font-medium">
+                          {inactiveItems.length} Inactive
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-slate-600 font-bold font-mono">
+                      Total: ₹{Number(struct?.totalAmount || 0).toLocaleString()}
+                    </span>
                   </div>
                 </div>
               );
@@ -553,6 +647,33 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                   <option value="ALL">All Students</option>
                   <option value="HOSTEL">Hostel Students Only</option>
                   <option value="DAY">Day Scholars Only</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600">Transport:</span>
+                <select
+                  value={transportFilter}
+                  onChange={(e) => setTransportFilter(e.target.value)}
+                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="ALL">All Students</option>
+                  <option value="TRANSPORT">Transport Enrolled Only</option>
+                  <option value="NON_TRANSPORT">Non-Transport Only</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600">Fee Head:</span>
+                <select
+                  value={feeHeadFilter}
+                  onChange={(e) => setFeeHeadFilter(e.target.value)}
+                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">All Fee Heads</option>
+                  {feeTypes.map((ft) => (
+                    <option key={ft.id} value={ft.id}>{ft.name} ({ft.code})</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -606,11 +727,18 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                           <div className="font-semibold text-slate-800">
                             {f.student.academicRecords[0]?.class?.name || 'Class'}
                           </div>
-                          <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-bold mt-0.5 ${
-                            f.student.isHostelStudent ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {f.student.isHostelStudent ? 'Hostel' : 'Day Scholar'}
-                          </span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                              f.student.isHostelStudent ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {f.student.isHostelStudent ? 'Hostel' : 'Day Scholar'}
+                            </span>
+                            {f.student.usesTransport && (
+                              <span className="inline-block text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900">
+                                Bus
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-semibold text-slate-800">{f.title}</div>
@@ -661,19 +789,54 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {feeTypes.map((ft) => (
-              <div key={ft.id} className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+              <div key={ft.id} className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between hover:shadow-md transition-shadow">
                 <div>
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
-                    <span className="text-sm font-bold text-slate-900">{ft.name}</span>
-                    <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                      {ft.code}
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-slate-900">{ft.name}</span>
+                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                        {ft.code}
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      ft.isActive !== false ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {ft.isActive !== false ? 'Active' : 'Inactive'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 leading-snug">{ft.description || 'Configured fee component'}</p>
+                  <p className="text-xs text-slate-500 leading-snug min-h-[32px]">{ft.description || 'Configured fee component for classes'}</p>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-medium">Frequency</span>
+                      <span className="font-bold text-slate-800">{ft.frequency}</span>
+                    </div>
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-medium">Usage</span>
+                      <span className="font-bold text-slate-800">
+                        {ft._count?.studentFees ? `${ft._count.studentFees} fee items` : 'No bills yet'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                  <span>Frequency</span>
-                  <span className="font-bold text-indigo-600">{ft.frequency}</span>
+
+                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-[11px] text-slate-400">
+                    {ft._count?.structureItems ? `In ${ft._count.structureItems} class tariffs` : 'Available in all classes'}
+                  </span>
+                  {canManageFees && (
+                    <button
+                      onClick={() => {
+                        setHeadToDelete(ft);
+                        setDeleteNotice(null);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                      title={`Delete ${ft.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -808,119 +971,159 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
       {/* EDIT CLASS FEE STRUCTURE MODAL */}
       {editingClass && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                   <Coins className="h-5 w-5 text-indigo-600" />
-                  Edit Fee Structure: {editingClass.name}
+                  Configure Class Tariffs: {editingClass.name}
                 </h3>
-                <p className="text-xs text-slate-500">
-                  Configure tuition, computer fee split, admission charges, prospectus, and term/hostel rules
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Enable or disable fee heads for this class. Only active fee heads will be billed in upcoming fee generation.
                 </p>
               </div>
               <button
                 onClick={() => setEditingClass(null)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer text-sm font-bold"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200 cursor-pointer text-sm font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto space-y-4 flex-1">
-              <div className="space-y-3">
-                {structureItems.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3.5 rounded-xl border transition-all ${
-                      item.isActive ? 'bg-slate-50 border-slate-200' : 'bg-slate-100/50 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-                      <div className="sm:col-span-4">
-                        <label className="block text-[11px] font-bold text-slate-700">Fee Component</label>
-                        <input
-                          type="text"
-                          value={item.componentName}
-                          onChange={(e) => {
-                            const updated = [...structureItems];
-                            updated[idx].componentName = e.target.value;
-                            setStructureItems(updated);
-                          }}
-                          className="w-full text-xs font-semibold px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-3">
-                        <label className="block text-[11px] font-bold text-slate-700">Amount (₹)</label>
-                        <input
-                          type="number"
-                          value={item.amount}
-                          onChange={(e) => {
-                            const updated = [...structureItems];
-                            updated[idx].amount = parseFloat(e.target.value) || 0;
-                            setStructureItems(updated);
-                          }}
-                          className="w-full text-xs font-mono font-bold px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-[11px] font-bold text-slate-700">Applies To</label>
-                        <select
-                          value={item.appliesTo}
-                          onChange={(e) => {
-                            const updated = [...structureItems];
-                            updated[idx].appliesTo = e.target.value;
-                            setStructureItems(updated);
-                          }}
-                          className="w-full text-xs font-semibold px-2 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
-                        >
-                          <option value="ALL">All Students</option>
-                          <option value="NEW_ADMISSION_ONLY">New Adm Only</option>
-                          <option value="HOSTEL_ONLY">Hostel Only</option>
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-[11px] font-bold text-slate-700">Due Month(s)</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 5,10"
-                          value={item.dueMonths}
-                          onChange={(e) => {
-                            const updated = [...structureItems];
-                            updated[idx].dueMonths = e.target.value;
-                            setStructureItems(updated);
-                          }}
-                          className="w-full text-xs px-2 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-1 text-center">
-                        <label className="block text-[10px] text-slate-400 font-semibold">Active</label>
-                        <input
-                          type="checkbox"
-                          checked={item.isActive}
-                          onChange={(e) => {
-                            const updated = [...structureItems];
-                            updated[idx].isActive = e.target.checked;
-                            setStructureItems(updated);
-                          }}
-                          className="mt-2 h-4 w-4 text-indigo-600 rounded border-slate-300"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {/* Info notice */}
+            <div className="px-5 py-3 bg-indigo-50/70 border-b border-indigo-100/70 text-xs text-indigo-900 flex items-start gap-2">
+              <ShieldCheck className="h-4 w-4 text-indigo-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>Fee Versioning Notice:</strong> Configurable fee heads are added to all classes. When you enable an <strong>Active</strong> fee head and save, it will be applicable for <em>new monthly fee generation only</em>. Historical student records, past receipts, and ledger balances remain untouched.
+              </span>
             </div>
 
-            <div className="p-4 border-t border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <span className="text-xs text-slate-500 font-medium">
-                Changes versioned for Academic Session {academicYears.find(y => y.id === selectedYearId)?.name}
-              </span>
-              <div className="flex gap-2">
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {structureItems.map((item, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3.5 rounded-xl border transition-all ${
+                    item.isActive
+                      ? 'bg-white border-slate-200 shadow-xs ring-1 ring-emerald-500/10'
+                      : 'bg-slate-50/80 border-slate-200/60 opacity-70'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 mb-2.5 border-b border-slate-100 gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900 text-xs">
+                        {item.feeTypeName || item.componentName}
+                      </span>
+                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                        {item.frequency}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = [...structureItems];
+                        updated[idx].isActive = !updated[idx].isActive;
+                        setStructureItems(updated);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        item.isActive
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'
+                          : 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
+                      }`}
+                    >
+                      {item.isActive ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          <span>Active (Billed)</span>
+                        </>
+                      ) : (
+                        <span>○ Inactive (Not Billed)</span>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold text-slate-600">Component Display Title</label>
+                      <input
+                        type="text"
+                        value={item.componentName}
+                        onChange={(e) => {
+                          const updated = [...structureItems];
+                          updated[idx].componentName = e.target.value;
+                          setStructureItems(updated);
+                        }}
+                        className="w-full text-xs font-semibold px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white mt-1 focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-semibold text-slate-600">Amount (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={item.amount}
+                        onChange={(e) => {
+                          const updated = [...structureItems];
+                          updated[idx].amount = parseFloat(e.target.value) || 0;
+                          setStructureItems(updated);
+                        }}
+                        className={`w-full text-xs font-mono font-bold px-2.5 py-1.5 border rounded-lg mt-1 focus:ring-1 focus:ring-indigo-500 ${
+                          item.isActive ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-100 border-slate-200 text-slate-400'
+                        }`}
+                      />
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-semibold text-slate-600">Applies To</label>
+                      <select
+                        value={item.appliesTo}
+                        onChange={(e) => {
+                          const updated = [...structureItems];
+                          updated[idx].appliesTo = e.target.value;
+                          setStructureItems(updated);
+                        }}
+                        className="w-full text-xs font-semibold px-2 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
+                      >
+                        <option value="ALL">All Students</option>
+                        <option value="NEW_ADMISSION_ONLY">New Admission Only</option>
+                        <option value="HOSTEL_ONLY">Hostel Students Only</option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-semibold text-slate-600">Due Month(s)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 5,10"
+                        value={item.dueMonths}
+                        onChange={(e) => {
+                          const updated = [...structureItems];
+                          updated[idx].dueMonths = e.target.value;
+                          setStructureItems(updated);
+                        }}
+                        className="w-full text-xs px-2 py-1.5 border border-slate-300 rounded-lg bg-white mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-50/70">
+              <div className="text-xs text-slate-600 flex items-center gap-3">
+                <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/60">
+                  {structureItems.filter(i => i.isActive).length} Active Heads
+                </span>
+                <span className="text-slate-500 bg-slate-200/60 px-2 py-1 rounded-lg">
+                  {structureItems.filter(i => !i.isActive).length} Inactive Heads
+                </span>
+                <span className="font-mono font-bold text-indigo-700">
+                  Active Total: ₹{structureItems.filter(i => i.isActive).reduce((sum, it) => sum + (parseFloat(it.amount) || 0), 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex gap-2 ml-auto">
                 <button
                   type="button"
                   onClick={() => setEditingClass(null)}
@@ -932,7 +1135,7 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                   type="button"
                   onClick={handleSaveClassStructure}
                   disabled={savingStructure}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
                 >
                   <Save className="h-4 w-4" />
                   {savingStructure ? 'Saving...' : 'Save Structure'}
@@ -1006,7 +1209,15 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
               <Plus className="h-5 w-5 text-indigo-600" />
               Add Configurable Fee Head
             </h3>
-            <p className="text-xs text-slate-500 mb-4">Create a new fee head to bill across classes</p>
+            <p className="text-xs text-slate-500 mb-3">Create a new fee component to bill across classes</p>
+
+            {/* Explanatory notice */}
+            <div className="mb-4 p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 flex items-start gap-2">
+              <ShieldCheck className="h-4 w-4 text-indigo-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>Automatic Class Integration:</strong> Once created, this fee head will automatically appear in <strong>all class fee structures</strong> as <em>Inactive (Not Billed)</em>. You can then selectively activate it and adjust tariffs per class. Historical student records and receipts remain completely unchanged.
+              </span>
+            </div>
 
             <form onSubmit={handleCreateFeeHead} className="space-y-3">
               <div>
@@ -1029,7 +1240,7 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                     required
                     placeholder="SCILAB"
                     value={newHead.code}
-                    onChange={(e) => setNewHead({ ...newHead, code: e.target.value })}
+                    onChange={(e) => setNewHead({ ...newHead, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') })}
                     className="w-full text-xs px-3 py-2 border border-slate-300 rounded-xl uppercase font-mono"
                   />
                 </div>
@@ -1045,6 +1256,20 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                     <option value="ONE_TIME">One-Time</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Default Amount (₹) (Optional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={newHead.defaultAmount || ''}
+                  onChange={(e) => setNewHead({ ...newHead, defaultAmount: parseFloat(e.target.value) || 0 })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Initial tariff populated into inactive items; can be adjusted per class</p>
               </div>
 
               <div>
@@ -1074,6 +1299,95 @@ export const FeesPage: React.FC<FeesPageProps> = ({ onOpenFeeCollection }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE FEE HEAD CONFIRMATION MODAL */}
+      {headToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-100 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3 text-rose-600 mb-3">
+              <div className="p-2.5 bg-rose-100 rounded-xl">
+                <Trash2 className="h-6 w-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Fee Head</h3>
+                <p className="text-xs text-slate-500 font-mono font-medium">{headToDelete.name} ({headToDelete.code})</p>
+              </div>
+            </div>
+
+            {deleteNotice ? (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 mb-4 space-y-2">
+                <div className="flex items-start gap-2 font-semibold">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>Unpaid Records Detected</span>
+                </div>
+                <p className="text-slate-600 leading-relaxed">{deleteNotice}</p>
+                <p className="text-[11px] text-amber-800 font-medium">
+                  Would you like to force delete this fee head and remove all unpaid line items, or cancel?
+                </p>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-600 mb-4 space-y-2">
+                <p>
+                  Are you sure you want to delete <strong className="text-slate-900">{headToDelete.name}</strong>?
+                </p>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-1 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Frequency:</span>
+                    <span className="font-semibold text-slate-800">{headToDelete.frequency}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Class structures using this:</span>
+                    <span className="font-semibold text-slate-800">{headToDelete._count?.structureItems ?? 'All classes'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student fee bills:</span>
+                    <span className="font-semibold text-slate-800">{headToDelete._count?.studentFees || 0}</span>
+                  </div>
+                </div>
+                <p className="text-slate-500 text-[11px] leading-relaxed">
+                  Note: If paid student fee receipts exist for this fee head, it will be safely deactivated across all classes rather than deleted, preserving accounting compliance and audit records.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setHeadToDelete(null);
+                  setDeleteNotice(null);
+                }}
+                disabled={deletingHead}
+                className="px-3.5 py-2 border border-slate-300 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              {deleteNotice ? (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteFeeHead(true)}
+                  disabled={deletingHead}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {deletingHead ? 'Deleting...' : 'Force Delete (Remove Unpaid)'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteFeeHead(false)}
+                  disabled={deletingHead}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {deletingHead ? 'Processing...' : 'Confirm Delete'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

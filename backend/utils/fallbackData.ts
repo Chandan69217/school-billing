@@ -44,28 +44,89 @@ export const ALL_PERMISSIONS_CATALOG = [
   { code: 'slc.generate', name: 'Generate SLC', module: 'Students', description: 'Issue official School Leaving Certificate on withdrawal/cancellation' },
   { code: 'slc.reprint', name: 'Reprint SLC (Duplicate)', module: 'Students', description: 'Reprint duplicate copies of official School Leaving Certificate' },
   { code: 'sensitive.view', name: 'View Sensitive Data', module: 'Administration', description: 'View unmasked Aadhaar numbers and sensitive particulars' },
+  // Transport
+  { code: 'transport.manage', name: 'Manage Transport Masters', module: 'Transport', description: 'Create and configure bus routes, stops, vehicle details, and pricing modes' },
+  { code: 'transport.assign', name: 'Assign Student Transport', module: 'Transport', description: 'Assign routes and stops to students, change stops, and stop transport service' },
+  // Store
+  { code: 'store.manage', name: 'Manage Store Items & Stock', module: 'Store', description: 'Create items, book kits, uniform sizes, pricing, and stock adjustments' },
+  { code: 'store.sell', name: 'Sell Books & Uniform', module: 'Store', description: 'Process counter sales of books and uniforms, generate BU receipts' },
+  { code: 'store.return', name: 'Process Store Returns', module: 'Store', description: 'Process sales returns and exchanges, reverse stock with mandatory reasons' },
+  { code: 'store.oversell', name: 'Allow Store Oversell', module: 'Store', description: 'Sell items beyond currently available stock count when tracking is enabled' },
+  // Discounts
+  { code: 'discount.manage', name: 'Manage Discount Rules', module: 'Discounts', description: 'Create and configure concession rules, categories, caps, and stacking' },
+  { code: 'discount.assign', name: 'Assign Discounts', module: 'Discounts', description: 'Assign concessions to students, link siblings, and end active assignments' },
+  { code: 'discount.manual', name: 'Counter Manual Discount', module: 'Discounts', description: 'Apply manual discretionary discounts at the billing counter up to max limit' },
+  { code: 'discount.delete', name: 'Delete / Archive Discount Rules', module: 'Discounts', description: 'Permanently delete unused discount rules or soft-archive rules with audit logs' },
 ];
 
 export const FALLBACK_USERS: FallbackUser[] = [
-
+  {
+    id: 'user-director-1',
+    email: 'admin@greenwoodhigh.edu',
+    username: 'superadmin',
+    fullName: 'Director (Super Admin)',
+    role: 'SUPER_ADMIN',
+    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
+    isActive: true,
+  },
+  {
+    id: 'user-director-2',
+    email: 'kundansharma7026@gmail.com',
+    username: 'kundan',
+    fullName: 'Kundan Sharma (Director)',
+    role: 'SUPER_ADMIN',
+    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
+    isActive: true,
+  },
+  {
+    id: 'user-principal-2',
+    email: 'principal@greenwoodhigh.edu',
+    username: 'principal',
+    fullName: 'Dr. Sunita Sharma (Principal)',
+    role: 'PRINCIPAL',
+    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
+    isActive: true,
+  },
+  {
+    id: 'user-accountant-3',
+    email: 'accountant@greenwoodhigh.edu',
+    username: 'accountant',
+    fullName: 'Rajesh K. Mehta (Accountant)',
+    role: 'ACCOUNTANT',
+    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
+    isActive: true,
+  },
+  {
+    id: 'user-admission-4',
+    email: 'admission@greenwoodhigh.edu',
+    username: 'admission_staff',
+    fullName: 'Pooja Verma (Admission Staff)',
+    role: 'ADMISSION_STAFF',
+    passwordHash: '$2a$10$3zRjZ9b5G7Y8wK1Wb6R78eP2V9b6y7vL6L9wZ8qR6h8R8eP2V9b6.',
+    isActive: true,
+  }
 ];
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   SUPER_ADMIN: ['*'],
   PRINCIPAL: [
     'student.view', 'admission.view', 'fee.view',
-    'discount.approve', 'customfee.approve', 'due.view', 'report.view',
-    'session.archive', 'session.export', 'student.status.change', 'fee.waive', 'slc.generate', 'slc.reprint', 'sensitive.view'
+    'discount.approve', 'customfee.approve', 'due.view', 'report.view', 'audit.view',
+    'session.archive', 'session.export', 'student.status.change', 'fee.waive', 'slc.generate', 'slc.reprint', 'sensitive.view',
+    'transport.manage', 'transport.assign', 'store.manage', 'store.sell', 'store.return', 'store.oversell',
+    'discount.manage', 'discount.assign', 'discount.manual', 'discount.delete'
   ],
   ACCOUNTANT: [
     'student.view', 'fee.collect', 'fee.view', 'receipt.print',
-    'receipt.reprint', 'discount.apply', 'due.view', 'report.view',
-    'session.export', 'fee.waive', 'slc.reprint'
+    'receipt.reprint', 'discount.apply', 'due.view', 'report.view', 'audit.view',
+    'session.export', 'fee.waive', 'slc.reprint',
+    'transport.assign', 'store.sell', 'store.return', 'discount.assign', 'discount.manual'
   ],
   ADMISSION_STAFF: [
     'student.create', 'student.edit', 'student.view', 'admission.manage',
     'admission.view', 'fee.collect', 'fee.view', 'receipt.print', 'receipt.reprint', 'due.view', 'customfee.request',
-    'session.export', 'student.status.change', 'slc.generate', 'slc.reprint'
+    'session.export', 'student.status.change', 'slc.generate', 'slc.reprint',
+    'transport.assign', 'discount.assign'
   ],
   STAFF: [
     'student.view', 'fee.view'

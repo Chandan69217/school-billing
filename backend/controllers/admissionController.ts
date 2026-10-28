@@ -6,6 +6,7 @@ import { generateAdmissionPdf } from '../utils/admissionPdf.js';
 import { generateSlcPdf } from '../utils/slcPdf.js';
 import { validateAadhaarNumber, cleanAadhaarDigits, maskAadhaar } from '../utils/verhoeff.js';
 import { verifyImageMagicBytes, savePhotoBuffer } from '../middleware/upload.js';
+import { broadcastNotification } from '../utils/notificationService.js';
 
 const prisma = new PrismaClient();
 
@@ -352,6 +353,51 @@ export const processAdmission = async (req: AuthenticatedRequest, res: Response)
         }
       });
 
+      // Transport Assignment during Admission
+      if (studentInfo.usesTransport && studentInfo.transportRouteId && studentInfo.transportStopId) {
+        const stop = await tx.transportStop.findUnique({ where: { id: studentInfo.transportStopId } });
+        if (stop) {
+          const admMonth = academicInfo.admissionDate ? new Date(academicInfo.admissionDate).getMonth() + 1 : new Date().getMonth() + 1;
+          const admYear = academicInfo.admissionDate ? new Date(academicInfo.admissionDate).getFullYear() : new Date().getFullYear();
+
+          await tx.studentTransportAssignment.create({
+            data: {
+              studentId: student.id,
+              routeId: studentInfo.transportRouteId,
+              stopId: studentInfo.transportStopId,
+              academicYearId: academicInfo.academicYearId,
+              serviceType: studentInfo.transportServiceType || 'TWO_WAY',
+              startMonth: admMonth,
+              startYear: admYear,
+              pickupPoint: studentInfo.transportPickupPoint || null,
+              monthlyFee: stop.monthlyFee,
+              isActive: true
+            }
+          });
+
+          await tx.student.update({
+            where: { id: student.id },
+            data: { usesTransport: true }
+          });
+
+          await tx.studentTransportHistory.create({
+            data: {
+              studentId: student.id,
+              routeId: studentInfo.transportRouteId,
+              stopId: studentInfo.transportStopId,
+              action: 'ASSIGNED',
+              effectiveMonth: admMonth,
+              effectiveYear: admYear,
+              monthlyFee: stop.monthlyFee,
+              serviceType: studentInfo.transportServiceType || 'TWO_WAY',
+              reason: 'Transport assigned during new admission',
+              changedById: req.user?.id,
+              changedByName: req.user?.fullName
+            }
+          });
+        }
+      }
+
       // 6. Store documents if any
       if (documents && Array.isArray(documents) && documents.length > 0) {
         for (const doc of documents) {
@@ -551,6 +597,13 @@ export const processAdmission = async (req: AuthenticatedRequest, res: Response)
         paymentCollected: result.payment?.amount
       },
       ipAddress: req.ip
+    });
+
+    await broadcastNotification({
+      title: 'New Student Admission',
+      message: `${result.student.firstName} ${result.student.lastName} enrolled in Session ${result.sessionName} (Adm #${result.admissionNumber})`,
+      type: 'INFO',
+      linkUrl: `/students?studentId=${result.student.id}`
     });
 
     res.status(201).json({
@@ -1022,6 +1075,7 @@ export const getAdmissionPdf = async (req: Request, res: Response): Promise<void
 
     const pdfBuffer = await generateAdmissionPdf({
       school: {
+        logo:settings?.logoUrl || 'N/A',
         name: settings?.schoolName || 'Pragya Bharti Public School',
         tagline: settings?.tagline || 'Knowledge, Character & Excellence (PBPS)',
         address: settings?.address || 'Campus Road, PBPS Campus',

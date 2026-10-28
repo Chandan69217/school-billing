@@ -30,9 +30,16 @@ export function getSchoolLogoBuffer(customLogoUrl?: string | null): Buffer {
   // If custom logo exists on disk in uploads or public
   if (customLogoUrl && customLogoUrl.trim() !== '' && customLogoUrl !== '/school-logo.svg' && customLogoUrl !== DEFAULT_LOGO_RELATIVE_PATH) {
     const cleanUrl = customLogoUrl.startsWith('/') ? customLogoUrl.slice(1) : customLogoUrl;
-    const customDiskPath = path.resolve(process.cwd(), 'public', cleanUrl);
+    const possiblePaths = [
+      path.resolve(process.cwd(), cleanUrl),
+      path.resolve(process.cwd(), "public", cleanUrl),
+    ];
 
-    if (fs.existsSync(customDiskPath)) {
+    for(const customDiskPath of possiblePaths){
+      if (!fs.existsSync(customDiskPath)) {
+        continue;
+      }
+
       try {
         const stats = fs.statSync(customDiskPath);
         const cached = customLogoCache.get(customDiskPath);
@@ -53,7 +60,9 @@ export function getSchoolLogoBuffer(customLogoUrl?: string | null): Buffer {
       } catch (err) {
         console.warn(`[Logo] Failed reading custom logo at ${customDiskPath}, falling back to default`, err);
       }
+
     }
+    
   }
 
   // Fallback to default school logo PNG

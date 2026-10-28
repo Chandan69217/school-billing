@@ -22,7 +22,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
   const [receipt, setReceipt] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [receiptFormat, setReceiptFormat] = useState<'a4' | 'a5'>('a4');
+
 
   // Email form
   const [showEmailInput, setShowEmailInput] = useState(false);
@@ -59,8 +59,38 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    if (!receipt?.id) {
+      console.error("Receipt ID is missing");
+      return;
+    }
+
+    const printWindow = window.open("about:blank", "_blank");
+
+    if (!printWindow) {
+      alert("Please allow pop-ups to print the receipt.");
+      return;
+    }
+
+    try {
+      const response = await apiClient.get(
+         `/receipts/${receipt.id}/pdf?isReprint=true`,
+        { responseType: "blob" }
+      );
+
+      const pdfBlob = new Blob([response.data], {
+        type: "application/pdf",
+      });
+
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+
+      printWindow.location.href = pdfUrl;
+
+    } catch (error) {
+      printWindow.close();
+      console.error("Failed to generate receipt PDF:", error);
+      alert("Unable to open the receipt PDF. Please try again.");
+    }
   };
 
   const handleSendEmail = async (e: React.FormEvent) => {
@@ -111,31 +141,14 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               {receipt && (
                 <>
-                  <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-[11px] font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setReceiptFormat('a4')}
-                      className={`px-2 py-1 rounded transition-colors ${receiptFormat === 'a4' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      A4 Full
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReceiptFormat('a5')}
-                      className={`px-2 py-1 rounded transition-colors ${receiptFormat === 'a5' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      A5 Half
-                    </button>
-                  </div>
-
                   <a
-                    href={`/api/receipts/${receipt.id}/pdf?format=${receiptFormat}`}
+                    href={`/api/receipts/${receipt.id}/pdf`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs min-h-[42px] sm:min-h-[36px]"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Download PDF ({receiptFormat.toUpperCase()})</span>
+                    <span>Download PDF</span>
                   </a>
 
                   <button
@@ -208,26 +221,34 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receiptId, isOpen, o
           ) : receipt ? (
             <div id="printable-receipt" className="relative border-2 border-slate-900 rounded-xl p-3.5 sm:p-6 bg-white shadow-xs overflow-x-hidden">
               {/* DUPLICATE COPY Watermark / Banner (SRS Section 6 & Acceptance Test 8) */}
-              {(receipt.isDuplicate || (receipt.reprintCount && receipt.reprintCount > 0)) && (
-                <div className="mb-3 flex items-center justify-between bg-rose-600 text-white font-black text-xs uppercase px-4 py-1.5 rounded-lg tracking-widest shadow-xs">
-                  <span>*** DUPLICATE COPY ***</span>
-                  <span className="text-[10px] font-semibold tracking-normal lowercase">
-                    reprint #{receipt.reprintCount || 1}
-                  </span>
-                </div>
-              )}
-
-              {/* Receipt Header Banner */}
-              <div className="border-b-2 border-slate-800 pb-4 text-center relative">
-                {(receipt.isDuplicate || (receipt.reprintCount && receipt.reprintCount > 0)) && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 select-none">
-                    <span className="text-6xl sm:text-7xl font-black text-rose-900 -rotate-12 uppercase tracking-widest">
-                      DUPLICATE COPY
+              {Boolean(
+                receipt.isDuplicate || Number(receipt.reprintCount) > 0
+              ) && (
+                  <div className="mb-3 flex items-center justify-between bg-rose-600 text-white font-black text-xs uppercase px-4 py-1.5 rounded-lg tracking-widest shadow-xs">
+                    <span>*** DUPLICATE COPY ***</span>
+                    <span className="text-[10px] font-semibold tracking-normal lowercase">
+                      reprint #{receipt.reprintCount || 1}
                     </span>
                   </div>
                 )}
+
+              {/* Receipt Header Banner */}
+              <div className="border-b-2 border-slate-800 pb-4 text-center relative">
+                 {Boolean(
+                  receipt.isDuplicate ||
+                  (Number(receipt.reprintCount) > 0)
+                ) && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 select-none">
+                      <span className="text-6xl sm:text-7xl font-black text-rose-900 -rotate-12 uppercase tracking-widest">
+                        DUPLICATE COPY
+                      </span>
+                    </div>
+                  )}
                 <div className="flex items-center justify-center gap-3 mb-2">
-                  <SchoolLogo className="h-12 w-12" />
+                   <SchoolLogo
+                        className="h-12 w-12"
+                        logoUrl={receipt.school?.logoUrl}
+                      />
                   <div className="text-left">
                     <h1 className="text-lg sm:text-xl font-black uppercase tracking-wider text-slate-900 leading-tight">
                       {receipt.school?.schoolName || 'Pragya Bharti Public School'}

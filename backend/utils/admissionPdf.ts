@@ -4,6 +4,7 @@ import { getSchoolLogoBuffer } from '../config/logo.js';
 export interface AdmissionPdfData {
   school: {
     name: string;
+    logo:string;
     tagline?: string;
     address: string;
     phone: string;

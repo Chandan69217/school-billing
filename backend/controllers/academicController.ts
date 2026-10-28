@@ -116,7 +116,7 @@ export const createAcademicYear = async (req: AuthenticatedRequest, res: Respons
     if (trimmedName && !errors.name) {
       const existing = await prisma.academicYear.findFirst({
         where: {
-          name: { equals: trimmedName, mode: 'insensitive' }
+          name: trimmedName
         }
       });
       if (existing) {

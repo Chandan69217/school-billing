@@ -13,6 +13,8 @@ export interface UserPayload {
   fullName: string;
   role: RoleType;
   permissions?: string[];
+  mustChangePassword?: boolean;
+  tokenVersion?: number;
 }
 
 export interface ApiResponse<T = any> {

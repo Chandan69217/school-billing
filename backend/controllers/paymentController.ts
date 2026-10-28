@@ -6,6 +6,7 @@ import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { generateReceiptPdf } from '../utils/pdf.js';
 import { sendReceiptEmail } from '../utils/email.js';
+import { broadcastNotification } from '../utils/notificationService.js';
 
 const prisma = new PrismaClient();
 
@@ -267,6 +268,13 @@ export const collectPayment = async (req: AuthenticatedRequest, res: Response): 
       ipAddress: req.ip
     });
 
+    await broadcastNotification({
+      title: 'Fee Payment Received',
+      message: `Collected ₹${paymentAmount.toLocaleString('en-IN')} for ${transactionResult.student.firstName} ${transactionResult.student.lastName} (Receipt #${transactionResult.receipt.receiptNumber}) via ${paymentMethod}`,
+      type: 'SUCCESS',
+      linkUrl: `/receipts`
+    });
+
     res.status(201).json({
       success: true,
       message: `Payment of ₹${paymentAmount.toLocaleString()} recorded successfully`,
@@ -359,6 +367,13 @@ export const cancelPayment = async (req: AuthenticatedRequest, res: Response): P
       oldData: { amount: payment.amount, receiptNumber: payment.receipt?.receiptNumber },
       newData: { isCancelled: true, reason },
       ipAddress: req.ip
+    });
+
+    await broadcastNotification({
+      title: 'Payment Voided / Cancelled',
+      message: `Payment of ₹${Number(payment.amount).toLocaleString('en-IN')} (Receipt #${payment.receipt?.receiptNumber || 'N/A'}) was voided by ${req.user?.fullName || 'Staff'}. Reason: ${reason}`,
+      type: 'WARNING',
+      linkUrl: `/reports`
     });
 
     res.json({ success: true, message: 'Payment cancelled and fee balances restored successfully' });

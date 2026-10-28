@@ -14,10 +14,15 @@ import {
   ChevronRight,
   ShieldCheck,
   X,
-  Coins
+  Coins,
+  Bus,
+  ShoppingBag,
+  Tag,
+  KeyRound
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext.js';
 import { SchoolLogo } from '../common/SchoolLogo.js';
+import { ChangePasswordModal } from '../auth/ChangePasswordModal.js';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -27,6 +32,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, logout, canAccess } = useAuth();
   const navigate = useNavigate();
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
 
   // Prevent background scrolling while mobile drawer is open & handle Escape key
   React.useEffect(() => {
@@ -58,6 +64,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { name: 'Students', path: '/students', icon: Users, module: 'students' as const },
     { name: 'Fee Management', path: '/fees', icon: Coins, module: 'fees' as const },
     { name: 'Fee Collection', path: '/payments', icon: CreditCard, module: 'payments' as const },
+    { name: 'Transport', path: '/transport', icon: Bus, module: 'transport' as const },
+    { name: 'Store (Books & Uniform)', path: '/store', icon: ShoppingBag, module: 'store' as const },
+    { name: 'Concessions', path: '/discounts', icon: Tag, module: 'discounts' as const },
     { name: 'Receipts', path: '/receipts', icon: Receipt, module: 'receipts' as const },
     { name: 'Reports', path: '/reports', icon: FileBarChart, module: 'reports' as const },
     { name: 'Staff & Roles', path: '/staff', icon: UserCog, module: 'staff' as const },
@@ -163,17 +172,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 {currentRole.label}
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              title="Logout"
-              aria-label="Logout"
-              className="p-2 text-slate-400 hover:text-rose-600 rounded-md hover:bg-rose-50 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setIsChangePasswordOpen(true)}
+                title="Change Password"
+                aria-label="Change Password"
+                className="p-2 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-indigo-50 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer"
+              >
+                <KeyRound className="h-4 w-4" />
+              </button>
+              <button
+                onClick={handleLogout}
+                title="Logout"
+                aria-label="Logout"
+                className="p-2 text-slate-400 hover:text-rose-600 rounded-md hover:bg-rose-50 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
+
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+      />
     </>
   );
 };

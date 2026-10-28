@@ -7,6 +7,7 @@ import { isDatabaseConfigured } from '../config/index.js';
 import { ALL_PERMISSIONS_CATALOG, DEFAULT_ROLE_PERMISSIONS, FALLBACK_USERS } from '../utils/fallbackData.js';
 import { clearLogoCache } from '../config/logo.js';
 import { verifyImageMagicBytes, saveLogoBuffer } from '../middleware/upload.js';
+import { seedInitialNotificationsIfEmpty } from '../utils/notificationService.js';
 
 const prisma = new PrismaClient();
 
@@ -167,6 +168,8 @@ export const getStaffList = async (req: Request, res: Response): Promise<void> =
         phone: true,
         role: true,
         isActive: true,
+        mustChangePassword: true,
+        failedPasswordAttempts: true,
         lastLoginAt: true,
         createdAt: true,
         _count: {
@@ -244,14 +247,169 @@ export const createStaff = async (req: AuthenticatedRequest, res: Response): Pro
   }
 };
 
+export const updateStaff = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { fullName, email, phone, role, isActive, mustChangePassword } = req.body;
+
+    if (!fullName || !email || !role) {
+      res.status(400).json({ success: false, message: 'Full name, email, and role are required' });
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: { id }
+    });
+
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Staff member not found' });
+      return;
+    }
+
+    // Guardrail 1: Cannot deactivate yourself
+    if (req.user?.id === id && isActive === false) {
+      res.status(400).json({ success: false, message: 'You cannot deactivate your own account.' });
+      return;
+    }
+
+    // Guardrail 2: Cannot demote yourself from SUPER_ADMIN
+    if (req.user?.id === id && req.user?.role === 'SUPER_ADMIN' && role !== 'SUPER_ADMIN') {
+      res.status(400).json({ success: false, message: 'You cannot remove your own Super Admin role.' });
+      return;
+    }
+
+    // Guardrail 3: Prevent demoting or deactivating the last active SUPER_ADMIN
+    if (existing.role === 'SUPER_ADMIN' && (role !== 'SUPER_ADMIN' || isActive === false)) {
+      const otherSuperAdmins = await prisma.user.count({
+        where: {
+          role: 'SUPER_ADMIN',
+          isActive: true,
+          NOT: { id }
+        }
+      });
+      if (otherSuperAdmins === 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Cannot demote or deactivate the last remaining active Super Admin in the system.'
+        });
+        return;
+      }
+    }
+
+    // Email uniqueness check
+    const normalizedEmail = email.trim().toLowerCase();
+    const emailConflict = await prisma.user.findFirst({
+      where: {
+        email: normalizedEmail,
+        NOT: { id }
+      }
+    });
+
+    if (emailConflict) {
+      res.status(400).json({ success: false, message: 'Email address is already in use by another staff member.' });
+      return;
+    }
+
+    // Invalidate sessions if role changed or account deactivated
+    const shouldRevokeTokens = existing.role !== role || (existing.isActive && isActive === false);
+    const tokenVersionUpdate = shouldRevokeTokens ? { increment: 1 } : undefined;
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        fullName: fullName.trim(),
+        email: normalizedEmail,
+        phone: phone ? phone.trim() : null,
+        role: role as RoleType,
+        isActive: isActive !== undefined ? Boolean(isActive) : existing.isActive,
+        mustChangePassword: mustChangePassword !== undefined ? Boolean(mustChangePassword) : existing.mustChangePassword,
+        ...(tokenVersionUpdate ? { tokenVersion: tokenVersionUpdate } : {})
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        username: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        mustChangePassword: true,
+        tokenVersion: true,
+        lastLoginAt: true,
+        createdAt: true
+      }
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'UPDATE_STAFF',
+      module: 'STAFF',
+      recordId: id,
+      oldData: {
+        fullName: existing.fullName,
+        email: existing.email,
+        phone: existing.phone,
+        role: existing.role,
+        isActive: existing.isActive,
+        mustChangePassword: existing.mustChangePassword
+      },
+      newData: updated,
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Staff details updated successfully',
+      data: updated
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const toggleStaffStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { isActive } = req.body;
 
+    const existing = await prisma.user.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Staff member not found' });
+      return;
+    }
+
+    // Guardrail: cannot deactivate self
+    if (req.user?.id === id && isActive === false) {
+      res.status(400).json({ success: false, message: 'You cannot deactivate your own account.' });
+      return;
+    }
+
+    // Guardrail: cannot deactivate last super admin
+    if (existing.role === 'SUPER_ADMIN' && isActive === false) {
+      const otherSuperAdmins = await prisma.user.count({
+        where: {
+          role: 'SUPER_ADMIN',
+          isActive: true,
+          NOT: { id }
+        }
+      });
+      if (otherSuperAdmins === 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Cannot deactivate the last remaining active Super Admin in the system.'
+        });
+        return;
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id },
-      data: { isActive: Boolean(isActive) },
+      data: {
+        isActive: Boolean(isActive),
+        // If deactivating, bump tokenVersion to immediately revoke sessions
+        ...(!isActive ? { tokenVersion: { increment: 1 } } : {})
+      },
       select: { id: true, fullName: true, isActive: true, role: true }
     });
 
@@ -261,7 +419,8 @@ export const toggleStaffStatus = async (req: AuthenticatedRequest, res: Response
       action: 'UPDATE_STAFF_STATUS',
       module: 'STAFF',
       recordId: id,
-      newData: { isActive },
+      oldData: { isActive: existing.isActive },
+      newData: { isActive: updated.isActive },
       ipAddress: req.ip
     });
 
@@ -271,20 +430,58 @@ export const toggleStaffStatus = async (req: AuthenticatedRequest, res: Response
   }
 };
 
+const generateSecurePassword = (): string => {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const special = '!@#$%&*';
+
+  let pwd = '';
+  pwd += upper[Math.floor(Math.random() * upper.length)];
+  pwd += lower[Math.floor(Math.random() * lower.length)];
+  pwd += digits[Math.floor(Math.random() * digits.length)];
+  pwd += special[Math.floor(Math.random() * special.length)];
+
+  const all = upper + lower + digits + special;
+  for (let i = 0; i < 8; i++) {
+    pwd += all[Math.floor(Math.random() * all.length)];
+  }
+  return pwd.split('').sort(() => 0.5 - Math.random()).join('');
+};
+
 export const resetStaffPassword = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { newPassword } = req.body;
+    const { newPassword, generateRandom, mustChangePassword } = req.body;
 
-    if (!newPassword || newPassword.length < 6) {
-      res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      res.status(404).json({ success: false, message: 'Staff member not found' });
       return;
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    let finalPassword = newPassword;
+    if (generateRandom || !finalPassword) {
+      finalPassword = generateSecurePassword();
+    } else {
+      if (finalPassword.length < 8) {
+        res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+        return;
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(finalPassword, 10);
+    const forceChange = mustChangePassword !== undefined ? Boolean(mustChangePassword) : true;
+
     await prisma.user.update({
       where: { id },
-      data: { passwordHash }
+      data: {
+        passwordHash,
+        mustChangePassword: forceChange,
+        failedPasswordAttempts: 0,
+        lockedUntil: null,
+        tokenVersion: { increment: 1 } // Invalidate all active sessions for this staff member
+      }
     });
 
     await logAudit({
@@ -293,10 +490,18 @@ export const resetStaffPassword = async (req: AuthenticatedRequest, res: Respons
       action: 'RESET_STAFF_PASSWORD',
       module: 'STAFF',
       recordId: id,
+      newData: { mustChangePassword: forceChange, generatedRandom: Boolean(generateRandom) },
       ipAddress: req.ip
     });
 
-    res.json({ success: true, message: 'Password reset successfully' });
+    res.json({
+      success: true,
+      message: 'Password reset successfully. The user will be required to change it on their next login.',
+      data: {
+        temporaryPassword: finalPassword,
+        mustChangePassword: forceChange
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -308,7 +513,7 @@ export const resetStaffPassword = async (req: AuthenticatedRequest, res: Respons
 
 export const getSettings = async (req: Request, res: Response): Promise<void> => {
   if (!isDatabaseConfigured()) {
-    res.json({ success: true, data: DEFAULT_SETTINGS });
+    res.json({ success: true, data: { ...DEFAULT_SETTINGS, bgImageUrl: '/assets/images/school-campus-bg.jpg' } });
     return;
   }
 
@@ -319,10 +524,16 @@ export const getSettings = async (req: Request, res: Response): Promise<void> =>
         data: { id: 'default' }
       });
     }
-    res.json({ success: true, data: settings });
+    res.json({
+      success: true,
+      data: {
+        ...settings,
+        bgImageUrl: '/assets/images/school-campus-bg.jpg'
+      }
+    });
   } catch (error: any) {
     console.warn('Settings using fallback due to database notice:', error.message);
-    res.json({ success: true, data: DEFAULT_SETTINGS });
+    res.json({ success: true, data: { ...DEFAULT_SETTINGS, bgImageUrl: '/assets/images/school-campus-bg.jpg' } });
   }
 };
 
@@ -629,6 +840,9 @@ export const restoreBackup = async (req: AuthenticatedRequest, res: Response): P
 
 export const getNotifications = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
+    // Ensure baseline system notifications exist if database is freshly initialized
+    await seedInitialNotificationsIfEmpty();
+
     const notifications = await prisma.notification.findMany({
       where: {
         OR: [
@@ -637,7 +851,7 @@ export const getNotifications = async (req: AuthenticatedRequest, res: Response)
         ]
       },
       orderBy: { createdAt: 'desc' },
-      take: 20
+      take: 50
     });
 
     const unreadCount = await prisma.notification.count({
@@ -655,14 +869,51 @@ export const getNotifications = async (req: AuthenticatedRequest, res: Response)
 
 export const markNotificationsRead = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    await prisma.notification.updateMany({
+    const { id } = req.body;
+    if (id) {
+      await prisma.notification.updateMany({
+        where: { id },
+        data: { isRead: true }
+      });
+      res.json({ success: true, message: 'Notification marked as read' });
+    } else {
+      await prisma.notification.updateMany({
+        where: {
+          OR: [{ userId: req.user?.id }, { userId: null }],
+          isRead: false
+        },
+        data: { isRead: true }
+      });
+      res.json({ success: true, message: 'All notifications marked as read' });
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteNotification = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    await prisma.notification.deleteMany({
       where: {
-        OR: [{ userId: req.user?.id }, { userId: null }],
-        isRead: false
-      },
-      data: { isRead: true }
+        id,
+        OR: [{ userId: req.user?.id }, { userId: null }]
+      }
     });
-    res.json({ success: true, message: 'All notifications marked as read' });
+    res.json({ success: true, message: 'Notification removed successfully' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const clearAllNotifications = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    await prisma.notification.deleteMany({
+      where: {
+        OR: [{ userId: req.user?.id }, { userId: null }]
+      }
+    });
+    res.json({ success: true, message: 'All notifications cleared successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -671,15 +922,25 @@ export const markNotificationsRead = async (req: AuthenticatedRequest, res: Resp
 export const getAuditLogs = async (req: Request, res: Response): Promise<void> => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string || '1', 10));
-    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit as string || '20', 10)));
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit as string || '50', 10)));
     const moduleFilter = req.query.module as string;
+    const search = (req.query.search as string || '').trim();
 
     const where: any = {};
     if (moduleFilter && moduleFilter !== 'ALL') {
       where.module = moduleFilter;
     }
 
-    const [total, logs] = await Promise.all([
+    if (search) {
+      where.OR = [
+        { action: { contains: search } },
+        { userName: { contains: search } },
+        { module: { contains: search } },
+        { recordId: { contains: search } }
+      ];
+    }
+
+    const [total, rawLogs] = await Promise.all([
       prisma.auditLog.count({ where }),
       prisma.auditLog.findMany({
         where,
@@ -689,9 +950,96 @@ export const getAuditLogs = async (req: Request, res: Response): Promise<void> =
       })
     ]);
 
+    // Format logs with human-readable narrative and consistent schema for UI
+    const formattedLogs = rawLogs.map((log) => {
+      let parsedOld: any = null;
+      let parsedNew: any = null;
+
+      if (log.oldData) {
+        try { parsedOld = JSON.parse(log.oldData); } catch { parsedOld = log.oldData; }
+      }
+      if (log.newData) {
+        try { parsedNew = JSON.parse(log.newData); } catch { parsedNew = log.newData; }
+      }
+
+      // Generate friendly narrative
+      let details = '';
+      const act = (log.action || '').toUpperCase();
+      const mod = (log.module || '').toUpperCase();
+
+      if (act === 'LOGIN') {
+        details = `Signed in successfully from IP ${log.ipAddress || '127.0.0.1'}`;
+      } else if (act === 'LOGOUT') {
+        details = `Signed out of the system`;
+      } else if (act === 'UPDATE_SETTINGS') {
+        details = `Updated school profile configuration & institution parameters`;
+      } else if (act === 'UPLOAD_SCHOOL_LOGO') {
+        details = `Uploaded and set new official school branding logo`;
+      } else if (act === 'RESET_SCHOOL_LOGO') {
+        details = `Reset school emblem to official default PBPS logo`;
+      } else if (act === 'UPDATE_ROLE_PERMISSIONS') {
+        details = `Updated role permissions matrix for ${parsedNew?.role || 'staff'}`;
+      } else if (act === 'RESET_STAFF_PASSWORD') {
+        details = `Reset staff user credentials`;
+      } else if (act === 'UPDATE_STAFF_STATUS') {
+        details = `Changed staff account status to ${parsedNew?.isActive ? 'Active' : 'Inactive'}`;
+      } else if (act === 'CREATE_ROUTE') {
+        details = `Created transport route "${parsedNew?.name || log.recordId || ''}"`;
+      } else if (act === 'UPDATE_ROUTE') {
+        details = `Updated transport route particulars`;
+      } else if (act === 'DELETE_ROUTE') {
+        details = `Removed transport route from fleet master`;
+      } else if (act === 'CREATE_STOP') {
+        details = `Added designated bus stop "${parsedNew?.name || ''}" (₹${parsedNew?.monthlyFee || 0}/mo)`;
+      } else if (act === 'UPDATE_STOP') {
+        details = `Updated bus stop fee / stop order`;
+      } else if (act === 'ASSIGN_STUDENT_TRANSPORT') {
+        details = `Enrolled student into transport (${parsedNew?.route || ''} - ${parsedNew?.stop || ''})`;
+      } else if (act === 'CHANGE_STUDENT_STOP') {
+        details = `Transferred student to stop "${parsedNew?.stop || ''}" (Fee: ₹${parsedNew?.monthlyFee || 0}/mo)`;
+      } else if (act === 'STOP_STUDENT_TRANSPORT') {
+        details = `Discontinued transport service. Reason: ${parsedNew?.reason || 'Staff action'}`;
+      } else if (act === 'COLLECT_FEE') {
+        details = `Collected fee payment for student`;
+      } else if (act === 'CANCEL_PAYMENT') {
+        details = `Voided/cancelled payment receipt with audit reason`;
+      } else if (act === 'CREATE_DISCOUNT_RULE') {
+        details = `Created concession rule "${parsedNew?.name || ''}" (${parsedNew?.value || 0}${parsedNew?.type === 'PERCENTAGE' ? '%' : '₹'})`;
+      } else if (act === 'UPDATE_DISCOUNT_RULE') {
+        details = `Updated concession rule parameters`;
+      } else if (act === 'DELETE_DISCOUNT_RULE') {
+        details = `Deleted fee concession rule`;
+      } else if (act === 'APPLY_DISCOUNT') {
+        details = `Applied fee concession to student account`;
+      } else if (act === 'CREATE_STORE_SALE') {
+        details = `Processed books & uniform counter sale`;
+      } else if (act === 'PROCESS_STORE_RETURN') {
+        details = `Processed books/uniform return & refund`;
+      } else {
+        details = `${log.action.replace(/_/g, ' ')} on ${log.module}${log.recordId ? ` (${log.recordId.slice(0, 8)})` : ''}`;
+      }
+
+      return {
+        id: log.id,
+        timestamp: log.timestamp,
+        createdAt: log.timestamp, // backward compatibility
+        action: log.action,
+        module: log.module,
+        resource: `${log.module}${log.recordId ? ` · ${log.recordId}` : ''}`,
+        recordId: log.recordId,
+        userName: log.userName || 'System',
+        userId: log.userId,
+        user: { fullName: log.userName || 'System', id: log.userId }, // backward compatibility
+        ipAddress: log.ipAddress || 'Internal',
+        details,
+        oldData: parsedOld,
+        newData: parsedNew
+      };
+    });
+
     res.json({
       success: true,
-      data: logs,
+      data: formattedLogs,
       pagination: {
         total,
         page,

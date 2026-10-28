@@ -74,7 +74,7 @@ export async function generateStyledExcelReport(options: ExcelReportOptions): Pr
   if (logoBuf && logoBuf.length > 0) {
     try {
       const imageId = workbook.addImage({
-        buffer: logoBuf,
+        buffer: logoBuf as any,
         extension: 'png'
       });
       // Place in cells A1 to B3

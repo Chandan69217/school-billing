@@ -4,6 +4,7 @@ import { logAudit } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { isDatabaseConfigured } from '../config/index.js';
 import { FALLBACK_CLASSES, FALLBACK_FEE_RATES } from '../utils/fallbackData.js';
+import { broadcastNotification } from '../utils/notificationService.js';
 
 const prisma = new PrismaClient();
 
@@ -67,20 +68,63 @@ export const getFeeTypes = async (req: Request, res: Response): Promise<void> =>
 
 export const createFeeType = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { name, code, frequency, description } = req.body;
+    const { name, code, frequency, description, defaultAmount } = req.body;
     if (!name || !code) {
       res.status(400).json({ success: false, message: 'Fee type name and code are required' });
       return;
     }
 
-    const feeType = await prisma.feeType.create({
-      data: {
-        name: name.trim(),
-        code: code.trim().toUpperCase(),
-        frequency: frequency || 'MONTHLY',
-        description
+    const cleanCode = code.trim().toUpperCase();
+    const cleanName = name.trim();
+
+    // Check if duplicate code or name exists
+    const existing = await prisma.feeType.findFirst({
+      where: {
+        OR: [{ code: cleanCode }, { name: cleanName }]
       }
     });
+
+    if (existing) {
+      res.status(400).json({
+        success: false,
+        message: existing.code === cleanCode
+          ? `A fee head with code '${cleanCode}' already exists.`
+          : `A fee head with name '${cleanName}' already exists.`
+      });
+      return;
+    }
+
+    const feeType = await prisma.feeType.create({
+      data: {
+        name: cleanName,
+        code: cleanCode,
+        frequency: frequency || 'MONTHLY',
+        description: description?.trim() || null,
+        isActive: true
+      }
+    });
+
+    // Automatically synchronize this new fee head into ALL existing Class Fee Structures as INACTIVE
+    const allStructures = await prisma.feeStructure.findMany();
+    for (const struct of allStructures) {
+      const exists = await prisma.feeStructureItem.findFirst({
+        where: { feeStructureId: struct.id, feeTypeId: feeType.id }
+      });
+      if (!exists) {
+        await prisma.feeStructureItem.create({
+          data: {
+            feeStructureId: struct.id,
+            feeTypeId: feeType.id,
+            componentName: feeType.name,
+            amount: defaultAmount ? parseFloat(defaultAmount) : 0,
+            frequency: feeType.frequency,
+            dueMonths: feeType.code === 'TERM' ? '5,10' : null,
+            appliesTo: feeType.code === 'HOSTEL' ? 'HOSTEL_ONLY' : (feeType.code === 'PROS' || feeType.code === 'ADM' ? 'NEW_ADMISSION_ONLY' : 'ALL'),
+            isActive: false // Added as INACTIVE by default in all class fee structures
+          }
+        });
+      }
+    }
 
     await logAudit({
       userId: req.user?.id,
@@ -92,7 +136,160 @@ export const createFeeType = async (req: AuthenticatedRequest, res: Response): P
       ipAddress: req.ip
     });
 
-    res.status(201).json({ success: true, data: feeType, message: 'Fee head created successfully' });
+    await broadcastNotification({
+      title: 'Configurable Fee Head Added',
+      message: `Fee head '${cleanName}' (${cleanCode}) was created and added to all class fee structures as inactive.`,
+      type: 'INFO',
+      linkUrl: `/fees`
+    });
+
+    res.status(201).json({
+      success: true,
+      data: feeType,
+      message: `Fee head '${feeType.name}' created and added to all class fee structures as inactive. You can now enable and configure its tariff for each class.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateFeeType = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { name, code, frequency, description, isActive } = req.body;
+
+    const existing = await prisma.feeType.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Fee head not found' });
+      return;
+    }
+
+    const updated = await prisma.feeType.update({
+      where: { id },
+      data: {
+        ...(name ? { name: name.trim() } : {}),
+        ...(code ? { code: code.trim().toUpperCase() } : {}),
+        ...(frequency ? { frequency } : {}),
+        ...(description !== undefined ? { description: description?.trim() || null } : {}),
+        ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {})
+      }
+    });
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'UPDATE_FEE_TYPE',
+      module: 'FEES',
+      recordId: id,
+      oldData: existing,
+      newData: updated,
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: updated, message: 'Fee head updated successfully' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteFeeType = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const feeType = await prisma.feeType.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            studentFees: true,
+            structureItems: true
+          }
+        }
+      }
+    });
+
+    if (!feeType) {
+      res.status(404).json({ success: false, message: 'Fee head not found' });
+      return;
+    }
+
+    // Check if there are any student fees associated with this fee head
+    if (feeType._count.studentFees > 0) {
+      // Check if any of these student fees have payments attached or paidAmount > 0
+      const paidCount = await prisma.studentFee.count({
+        where: {
+          feeTypeId: id,
+          paidAmount: { gt: 0 }
+        }
+      });
+
+      if (paidCount > 0) {
+        // Financial ledger integrity: cannot delete recorded payment transactions. Deactivate instead.
+        await prisma.feeType.update({
+          where: { id },
+          data: { isActive: false }
+        });
+        await prisma.feeStructureItem.updateMany({
+          where: { feeTypeId: id },
+          data: { isActive: false }
+        });
+
+        await logAudit({
+          userId: req.user?.id,
+          userName: req.user?.fullName,
+          action: 'DEACTIVATE_FEE_TYPE',
+          module: 'FEES',
+          recordId: id,
+          newData: { reason: `Deactivated because ${paidCount} payments exist` },
+          ipAddress: req.ip
+        });
+
+        res.json({
+          success: true,
+          actionTaken: 'DEACTIVATED',
+          message: `Fee head '${feeType.name}' has ${paidCount} past payment records and cannot be permanently deleted. It has been deactivated across all fee structures instead.`
+        });
+        return;
+      }
+
+      // If all student fees are unpaid (paidAmount == 0):
+      // Allow deletion if force is confirmed
+      const force = req.query.force === 'true' || req.body?.force === true;
+      if (!force) {
+        res.status(400).json({
+          success: false,
+          requiresConfirmation: true,
+          unpaidCount: feeType._count.studentFees,
+          message: `Fee head '${feeType.name}' is attached to ${feeType._count.studentFees} unpaid student fee items. Please confirm to delete this fee head and remove the unpaid items.`
+        });
+        return;
+      }
+
+      // Delete unpaid student fees, structure items, and the fee type
+      await prisma.$transaction([
+        prisma.studentFee.deleteMany({ where: { feeTypeId: id, paidAmount: 0 } }),
+        prisma.feeStructureItem.deleteMany({ where: { feeTypeId: id } }),
+        prisma.feeType.delete({ where: { id } })
+      ]);
+    } else {
+      // No student fees generated at all: safe to delete directly
+      await prisma.$transaction([
+        prisma.feeStructureItem.deleteMany({ where: { feeTypeId: id } }),
+        prisma.feeType.delete({ where: { id } })
+      ]);
+    }
+
+    await logAudit({
+      userId: req.user?.id,
+      userName: req.user?.fullName,
+      action: 'DELETE_FEE_TYPE',
+      module: 'FEES',
+      recordId: id,
+      oldData: feeType,
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, message: `Fee head '${feeType.name}' deleted successfully` });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -113,6 +310,12 @@ export const getFeeStructures = async (req: Request, res: Response): Promise<voi
     const where: any = {};
     if (academicYearId) where.academicYearId = academicYearId;
 
+    // Retrieve all active fee types to ensure every structure represents them
+    const allFeeTypes = await prisma.feeType.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' }
+    });
+
     const structures = await prisma.feeStructure.findMany({
       where,
       include: {
@@ -125,6 +328,29 @@ export const getFeeStructures = async (req: Request, res: Response): Promise<voi
       },
       orderBy: { class: { orderNumber: 'asc' } }
     });
+
+    // Auto-synchronize missing fee heads as inactive items in each structure
+    for (const struct of structures) {
+      const existingFeeTypeIds = new Set(struct.items.map(it => it.feeTypeId));
+      for (const ft of allFeeTypes) {
+        if (!existingFeeTypeIds.has(ft.id)) {
+          const newItem = await prisma.feeStructureItem.create({
+            data: {
+              feeStructureId: struct.id,
+              feeTypeId: ft.id,
+              componentName: ft.name,
+              amount: 0,
+              frequency: ft.frequency,
+              dueMonths: ft.code === 'TERM' ? '5,10' : null,
+              appliesTo: ft.code === 'HOSTEL' ? 'HOSTEL_ONLY' : (ft.code === 'PROS' || ft.code === 'ADM' ? 'NEW_ADMISSION_ONLY' : 'ALL'),
+              isActive: false
+            },
+            include: { feeType: true }
+          });
+          struct.items.push(newItem);
+        }
+      }
+    }
 
     res.json({ success: true, data: structures });
   } catch (error: any) {
@@ -141,8 +367,11 @@ export const createFeeStructure = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    // Compute total amount from items
-    const totalAmount = items.reduce((sum: number, it: any) => sum + (parseFloat(it.amount) || 0), 0);
+    // Compute total amount from active items only
+    const totalAmount = items.reduce((sum: number, it: any) => {
+      if (it.isActive === false || it.isActive === 'false') return sum;
+      return sum + (parseFloat(it.amount) || 0);
+    }, 0);
 
     const structure = await prisma.$transaction(async (tx) => {
       const existing = await tx.feeStructure.findUnique({
@@ -517,6 +746,7 @@ export const getStudentBill = async (req: Request, res: Response): Promise<void>
     if (feeStructure && feeStructure.items) {
       for (const m of targetMonths) {
         for (const item of feeStructure.items) {
+          if (item.isActive === false) continue;
           // Check hostel status requirement
           if (item.appliesTo === 'HOSTEL_ONLY' && !student.isHostelStudent) continue;
           if (item.appliesTo === 'NEW_ADMISSION_ONLY') continue; // Only for new admission
@@ -557,6 +787,142 @@ export const getStudentBill = async (req: Request, res: Response): Promise<void>
       }
     }
 
+    // 3. Check for student Transport Fee
+    let transportInfo = null;
+    if (student.usesTransport) {
+      const activeTransport = await prisma.studentTransportAssignment.findFirst({
+        where: {
+          studentId,
+          isActive: true
+        },
+        include: { route: true, stop: true }
+      });
+
+      if (activeTransport) {
+        transportInfo = {
+          routeName: activeTransport.route.name,
+          stopName: activeTransport.stop.name,
+          serviceType: activeTransport.serviceType,
+          monthlyFee: Number(activeTransport.monthlyFee)
+        };
+
+        // Find or create TRANS fee type
+        let transFeeType = await prisma.feeType.findFirst({
+          where: { code: 'TRANS' }
+        });
+        if (!transFeeType) {
+          transFeeType = await prisma.feeType.create({
+            data: {
+              name: 'Transport Fee',
+              code: 'TRANS',
+              frequency: 'MONTHLY',
+              description: 'Monthly school bus and transport service fee'
+            }
+          });
+        }
+
+        const settings = await prisma.schoolSettings.findFirst();
+        let allowedBillingMonths: number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        if (settings?.transportBillingMonths) {
+          allowedBillingMonths = settings.transportBillingMonths.split(',').map(x => parseInt(x.trim(), 10)).filter(x => !isNaN(x));
+        }
+
+        for (const m of targetMonths) {
+          if (!allowedBillingMonths.includes(m)) continue;
+          if (m < activeTransport.startMonth) continue;
+          if (activeTransport.stopMonth && m > activeTransport.stopMonth) continue;
+
+          const alreadyInBill = billItems.some(bi => bi.feeTypeId === transFeeType!.id && bi.month === m);
+          const alreadyFullyPaid = existingFees.some(ef => ef.feeTypeId === transFeeType!.id && ef.month === m && Number(ef.remainingAmount) === 0);
+
+          if (!alreadyInBill && !alreadyFullyPaid) {
+            const amt = Number(activeTransport.monthlyFee);
+            billItems.push({
+              feeTypeId: transFeeType.id,
+              title: `Transport Fee (${activeTransport.route.name} - ${activeTransport.stop.name}) (${monthNames[m]} ${currentYear})`,
+              month: m,
+              monthName: monthNames[m],
+              amount: amt,
+              paidAmount: 0,
+              remainingAmount: amt,
+              isAlreadyGenerated: false
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Calculate Concessions / Discounts
+    const activeDiscounts = await prisma.discountApplication.findMany({
+      where: {
+        studentId,
+        status: 'APPROVED',
+        isEnded: false,
+        isDeleted: false
+      },
+      include: { discountRule: true }
+    });
+
+    const feeTypesList = await prisma.feeType.findMany();
+    const feeTypeMap = new Map(feeTypesList.map(ft => [ft.id, ft]));
+
+    let totalDiscountApplied = 0;
+    const appliedConcessionDetails: Array<{
+      ruleName: string;
+      ruleCode: string;
+      discountAmount: number;
+      applicableHead: string;
+    }> = [];
+
+    // Apply discounts on ungenerated or active bill items
+    for (const item of billItems) {
+      if (item.paidAmount > 0) continue; // Skip items already partially paid
+      const ft = feeTypeMap.get(item.feeTypeId);
+      if (!ft) continue;
+
+      for (const disc of activeDiscounts) {
+        if (!disc.discountRule) continue;
+        // Check fee head eligibility
+        const heads = disc.discountRule.applicableFeeHeads
+          ? disc.discountRule.applicableFeeHeads.split(',').map(h => h.trim().toUpperCase())
+          : [];
+        const isEligibleHead = heads.length === 0 || heads.includes(ft.code.toUpperCase()) || heads.includes(ft.name.toUpperCase());
+
+        if (!isEligibleHead) continue;
+
+        // Check month eligibility
+        if (item.month) {
+          if (disc.effectiveMonth && item.month < disc.effectiveMonth) continue;
+          if (disc.endMonth && item.month > disc.endMonth) continue;
+        }
+
+        let discAmt = 0;
+        if (disc.discountRule.type === 'PERCENTAGE') {
+          const pct = Number(disc.discountRule.value);
+          discAmt = Math.round((item.amount * pct) / 100);
+        } else {
+          discAmt = Number(disc.amount || disc.discountRule.value);
+        }
+
+        if (disc.discountRule.maxCapPerStudent && discAmt > Number(disc.discountRule.maxCapPerStudent)) {
+          discAmt = Number(disc.discountRule.maxCapPerStudent);
+        }
+
+        discAmt = Math.min(discAmt, item.remainingAmount);
+
+        if (discAmt > 0) {
+          item.remainingAmount = Math.max(0, item.remainingAmount - discAmt);
+          totalDiscountApplied += discAmt;
+          appliedConcessionDetails.push({
+            ruleName: disc.discountRule.name,
+            ruleCode: disc.discountRule.code || 'CONC',
+            discountAmount: discAmt,
+            applicableHead: ft.name
+          });
+        }
+      }
+    }
+
     const totalDue = billItems.reduce((acc, it) => acc + it.remainingAmount, 0);
 
     res.json({
@@ -570,10 +936,14 @@ export const getStudentBill = async (req: Request, res: Response): Promise<void>
           classId: record.classId,
           isHostelStudent: student.isHostelStudent,
           hostelRoomNumber: student.hostelRoomNumber,
-          isNonAttending: student.isNonAttending
+          isNonAttending: student.isNonAttending,
+          usesTransport: student.usesTransport,
+          transportInfo
         },
         items: billItems,
-        totalDue
+        totalDue,
+        totalDiscountApplied,
+        appliedConcessions: appliedConcessionDetails
       }
     });
   } catch (error: any) {
@@ -686,7 +1056,75 @@ export const generateMonthlyFees = async (req: AuthenticatedRequest, res: Respon
         });
         generatedCount++;
       }
+
+      // Check if student has active transport assignment
+      if (rec.student.usesTransport) {
+        const transportAssignment = await prisma.studentTransportAssignment.findFirst({
+          where: {
+            studentId: rec.studentId,
+            isActive: true
+          },
+          include: { route: true, stop: true }
+        });
+
+        if (transportAssignment && targetMonth >= transportAssignment.startMonth && (!transportAssignment.stopMonth || targetMonth <= transportAssignment.stopMonth)) {
+          let transFeeType = await prisma.feeType.findFirst({ where: { code: 'TRANS' } });
+          if (!transFeeType) {
+            transFeeType = await prisma.feeType.create({
+              data: {
+                name: 'Transport Fee',
+                code: 'TRANS',
+                frequency: 'MONTHLY',
+                description: 'Monthly school bus and transport service fee'
+              }
+            });
+          }
+
+          const existingTrans = await prisma.studentFee.findUnique({
+            where: {
+              studentId_academicYearId_feeTypeId_month_year: {
+                studentId: rec.studentId,
+                academicYearId,
+                feeTypeId: transFeeType.id,
+                month: targetMonth,
+                year: targetYear
+              }
+            }
+          });
+
+          if (!existingTrans) {
+            const transAmt = Number(transportAssignment.monthlyFee);
+            await prisma.studentFee.create({
+              data: {
+                studentId: rec.studentId,
+                academicYearId,
+                feeTypeId: transFeeType.id,
+                month: targetMonth,
+                year: targetYear,
+                title: `Transport Fee (${transportAssignment.route.name} - ${transportAssignment.stop.name}) - ${monthName} ${targetYear}`,
+                amount: transAmt,
+                discountAmount: 0,
+                netAmount: transAmt,
+                paidAmount: 0,
+                remainingAmount: transAmt,
+                dueDate,
+                status: FeeStatus.PENDING
+              }
+            });
+            generatedCount++;
+          } else {
+            skippedCount++;
+          }
+        }
+      }
     }
+
+    await broadcastNotification({
+      title: 'Monthly Fee Batch Generated',
+      message: `Generated ${generatedCount} fee records for ${monthName} ${targetYear} (${skippedCount} already existed).`,
+      type: 'INFO',
+      linkUrl: `/fees`
+    });
 
     res.json({
       success: true,
@@ -705,7 +1143,7 @@ export const generateMonthlyFees = async (req: AuthenticatedRequest, res: Respon
 
 export const getPendingFees = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { classId, academicYearId, month, isHostel } = req.query;
+    const { classId, academicYearId, month, isHostel, usesTransport, feeTypeId } = req.query;
 
     const where: any = {
       remainingAmount: { gt: 0 }
@@ -713,6 +1151,7 @@ export const getPendingFees = async (req: Request, res: Response): Promise<void>
 
     if (academicYearId) where.academicYearId = academicYearId;
     if (month) where.month = parseInt(month as string, 10);
+    if (feeTypeId) where.feeTypeId = feeTypeId;
 
     const studentWhere: any = {};
     if (classId) {
@@ -720,6 +1159,9 @@ export const getPendingFees = async (req: Request, res: Response): Promise<void>
     }
     if (isHostel !== undefined) {
       studentWhere.isHostelStudent = isHostel === 'true';
+    }
+    if (usesTransport !== undefined) {
+      studentWhere.usesTransport = usesTransport === 'true';
     }
 
     if (Object.keys(studentWhere).length > 0) {

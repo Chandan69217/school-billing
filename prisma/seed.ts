@@ -36,6 +36,19 @@ export const ALL_PERMISSIONS = [
   { code: 'slc.generate', name: 'Generate SLC', module: 'Students', description: 'Issue official School Leaving Certificate on withdrawal/cancellation' },
   { code: 'slc.reprint', name: 'Reprint SLC (Duplicate)', module: 'Students', description: 'Reprint duplicate copies of official School Leaving Certificate' },
   { code: 'sensitive.view', name: 'View Sensitive Data', module: 'Administration', description: 'View unmasked Aadhaar numbers and sensitive particulars' },
+  // Transport Module Permissions
+  { code: 'transport.manage', name: 'Manage Transport Masters', module: 'Transport', description: 'Create and configure bus routes, stops, vehicle details, and pricing modes' },
+  { code: 'transport.assign', name: 'Assign Student Transport', module: 'Transport', description: 'Assign routes and stops to students, change stops, and stop transport service' },
+  // Store / Books & Uniform Permissions
+  { code: 'store.manage', name: 'Manage Store Items & Stock', module: 'Store', description: 'Create items, book kits, uniform sizes, pricing, and stock adjustments' },
+  { code: 'store.sell', name: 'Sell Books & Uniform', module: 'Store', description: 'Process counter sales of books and uniforms, generate BU receipts' },
+  { code: 'store.return', name: 'Process Store Returns', module: 'Store', description: 'Process sales returns and exchanges, reverse stock with mandatory reasons' },
+  { code: 'store.oversell', name: 'Allow Store Oversell', module: 'Store', description: 'Sell items beyond currently available stock count when tracking is enabled' },
+  // Discount Engine Permissions
+  { code: 'discount.manage', name: 'Manage Discount Rules', module: 'Discounts', description: 'Create and configure concession rules, categories, caps, and stacking' },
+  { code: 'discount.assign', name: 'Assign Discounts', module: 'Discounts', description: 'Assign concessions to students, link siblings, and end active assignments' },
+  { code: 'discount.manual', name: 'Counter Manual Discount', module: 'Discounts', description: 'Apply manual discretionary discounts at the billing counter up to max limit' },
+  { code: 'discount.delete', name: 'Delete / Archive Discount Rules', module: 'Discounts', description: 'Permanently delete unused discount rules or soft-archive rules with audit logs' },
 ];
 
 async function main() {
@@ -57,17 +70,21 @@ async function main() {
     PRINCIPAL: [
       'student.view', 'admission.view', 'fee.view',
       'discount.approve', 'customfee.approve', 'due.view', 'report.view',
-      'session.archive', 'session.export', 'student.status.change', 'fee.waive', 'slc.generate', 'slc.reprint', 'sensitive.view'
+      'session.archive', 'session.export', 'student.status.change', 'fee.waive', 'slc.generate', 'slc.reprint', 'sensitive.view',
+      'transport.manage', 'transport.assign', 'store.manage', 'store.sell', 'store.return', 'store.oversell',
+      'discount.manage', 'discount.assign', 'discount.manual', 'discount.delete'
     ],
     ACCOUNTANT: [
       'student.view', 'fee.collect', 'fee.view', 'receipt.print',
       'receipt.reprint', 'discount.apply', 'due.view', 'report.view',
-      'session.export', 'fee.waive', 'slc.reprint'
+      'session.export', 'fee.waive', 'slc.reprint',
+      'transport.assign', 'store.sell', 'store.return', 'discount.assign', 'discount.manual'
     ],
     ADMISSION_STAFF: [
       'student.create', 'student.edit', 'student.view', 'admission.manage',
       'admission.view', 'fee.collect', 'fee.view', 'receipt.print', 'receipt.reprint', 'due.view',
-      'session.export', 'student.status.change', 'slc.generate', 'slc.reprint'
+      'session.export', 'student.status.change', 'slc.generate', 'slc.reprint',
+      'transport.assign', 'discount.assign'
     ],
     STAFF: ['student.view', 'fee.view']
   };
@@ -603,7 +620,121 @@ async function main() {
     });
   }
 
+  // 11. Seed Store Categories & Sample Items
+  const storeCategories = [
+    { name: 'Books', code: 'BOOKS', description: 'Curriculum textbooks and exercise workbooks' },
+    { name: 'Uniform', code: 'UNIFORM', description: 'Official school uniform apparel and accessories' },
+    { name: 'Stationery', code: 'STATIONERY', description: 'Notebooks, writing materials, and geometry boxes' },
+    { name: 'Other', code: 'OTHER', description: 'Bags, water bottles, and supplementary school store items' }
+  ];
+  const createdCats: Record<string, any> = {};
+  for (const cat of storeCategories) {
+    createdCats[cat.code] = await prisma.storeCategory.upsert({
+      where: { code: cat.code },
+      update: { name: cat.name, description: cat.description },
+      create: cat
+    });
+  }
+
+  // Seed standard Uniform and Book Kit items
+  if (createdCats['UNIFORM']) {
+    await prisma.storeItem.upsert({
+      where: { sku: 'UNIF-SHIRT-STD' },
+      update: { price: 450, sizes: '28,30,32,34,36' },
+      create: {
+        sku: 'UNIF-SHIRT-STD',
+        name: 'Shirt',
+        categoryId: createdCats['UNIFORM'].id,
+        sizes: '28,30,32,34,36',
+        price: 450,
+        costPrice: 280,
+        trackStock: true,
+        currentStock: 100,
+        lowStockAlert: 10,
+        applicableClasses: 'ALL'
+      }
+    });
+
+    await prisma.storeItem.upsert({
+      where: { sku: 'UNIF-TROUSER-STD' },
+      update: { price: 550, sizes: '28,30,32,34,36' },
+      create: {
+        sku: 'UNIF-TROUSER-STD',
+        name: 'Trousers',
+        categoryId: createdCats['UNIFORM'].id,
+        sizes: '28,30,32,34,36',
+        price: 550,
+        costPrice: 320,
+        trackStock: true,
+        currentStock: 80,
+        lowStockAlert: 10,
+        applicableClasses: 'ALL'
+      }
+    });
+  }
+
+  if (createdCats['BOOKS'] && createdClasses['Class V']) {
+    await prisma.storeItem.upsert({
+      where: { sku: 'BK-CL5-KIT' },
+      update: { price: 2200 },
+      create: {
+        sku: 'BK-CL5-KIT',
+        name: 'Class V Book Set',
+        categoryId: createdCats['BOOKS'].id,
+        isKit: true,
+        price: 2200,
+        costPrice: 1600,
+        trackStock: true,
+        currentStock: 60,
+        lowStockAlert: 10,
+        applicableClasses: createdClasses['Class V'].id
+      }
+    });
+  }
+
+  // 12. Seed Transport Routes & Stops
+  const routeA = await prisma.transportRoute.upsert({
+    where: { code: 'RT-A' },
+    update: { name: 'Route A' },
+    create: {
+      code: 'RT-A',
+      name: 'Route A',
+      description: 'Main highway route covering Manpur, Buniadganj Chowk, and Campus Gate',
+      vehicleNumber: 'BR-02-P-1234',
+      driverName: 'Ramesh Singh',
+      driverPhone: '+91 94304 42801',
+      isActive: true
+    }
+  });
+
+  await prisma.transportStop.upsert({
+    where: { routeId_name: { routeId: routeA.id, name: 'Stop 1' } },
+    update: { monthlyFee: 800, orderNumber: 1 },
+    create: {
+      routeId: routeA.id,
+      name: 'Stop 1',
+      orderNumber: 1,
+      monthlyFee: 800,
+      oneWayFee: 500,
+      isActive: true
+    }
+  });
+
+  await prisma.transportStop.upsert({
+    where: { routeId_name: { routeId: routeA.id, name: 'Stop 2' } },
+    update: { monthlyFee: 1000, orderNumber: 2 },
+    create: {
+      routeId: routeA.id,
+      name: 'Stop 2',
+      orderNumber: 2,
+      monthlyFee: 1000,
+      oneWayFee: 650,
+      isActive: true
+    }
+  });
+
   console.log('✅ Sample Students seeded (Day Scholars & Hostel Students)');
+  console.log('✅ Transport Routes, Stops, Store Categories & Items initialized');
   console.log('🎉 Seeding successfully finished!');
 }
 

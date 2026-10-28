@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileBarChart,
   Download,
@@ -13,9 +13,11 @@ import {
   XCircle,
   Clock,
   Printer,
-  FileSpreadsheet,
-  FileText
+  FileText,
+  Loader2,
+  X
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { apiClient } from '../api/client.js';
 
 type ReportTab =
@@ -42,6 +44,13 @@ export const ReportsPage: React.FC = () => {
   const [staffData, setStaffData] = useState<any[]>([]);
   const [cancelledData, setCancelledData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // PDF Generation & Print Preview State
+  const [generatingPdf, setGeneratingPdf] = useState<'print' | 'download' | null>(null);
+  const [printPreviewUrl, setPrintPreviewUrl] = useState<string | null>(null);
+  const [printPreviewTitle, setPrintPreviewTitle] = useState<string>('');
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     fetchReport();
@@ -82,161 +91,113 @@ export const ReportsPage: React.FC = () => {
     }
   };
 
-  const exportCsv = () => {
-    let rows: string[][] = [];
-    let filename = `PBPS-Report-${reportType}.csv`;
-
-    if (reportType === 'daily' && dailyData) {
-      filename = `PBPS-Daily-Collection-${selectedDate}.csv`;
-      rows.push(['Receipt #', 'Student Name', 'Admission #', 'Class', 'Hostel', 'Method', 'Amount (INR)', 'Officer', 'Date']);
-      dailyData.payments?.forEach((p: any) => {
-        rows.push([
-          p.receiptNumber,
-          p.studentName,
-          p.admissionNumber,
-          p.className,
-          p.isHostel ? 'Hostel' : 'Day',
-          p.paymentMethod,
-          p.amount.toString(),
-          typeof p.collectedBy === 'object' ? (p.collectedBy?.fullName || p.collectedBy?.username || 'Staff') : (p.collectedBy || 'Staff'),
-          new Date(p.paidAt).toLocaleString('en-IN')
-        ]);
-      });
-    } else if (reportType === 'classWise' && classData) {
-      filename = 'PBPS-Class-Wise-Performance.csv';
-      rows.push(['Class', 'Students', 'Hostel Students', 'Total Billed (INR)', 'Total Collected (INR)', 'Outstanding Due (INR)', 'Collection Rate']);
-      classData.forEach((c: any) => {
-        rows.push([
-          c.className,
-          c.studentCount.toString(),
-          (c.hostelCount || 0).toString(),
-          c.totalBilled.toString(),
-          c.totalCollected.toString(),
-          c.totalPending.toString(),
-          `${c.collectionPercentage}%`
-        ]);
-      });
-    } else if (reportType === 'feeHead' && feeHeadData) {
-      filename = 'PBPS-Fee-Head-Wise-Collection.csv';
-      rows.push(['Fee Head', 'Code', 'Billing Frequency', 'Total Billed (INR)', 'Collected (INR)', 'Dues (INR)']);
-      feeHeadData.forEach((f: any) => {
-        rows.push([f.feeHead, f.code, f.frequency, f.billed.toString(), f.collected.toString(), f.dues.toString()]);
-      });
-    } else if (reportType === 'hostel' && hostelData) {
-      filename = 'PBPS-Hostel-Boarders-Report.csv';
-      rows.push(['Student Name', 'Admission #', 'Class', 'Room #', 'Emergency Phone', 'Total Billed', 'Total Paid', 'Total Due']);
-      hostelData.students?.forEach((s: any) => {
-        rows.push([s.name, s.admissionNumber, s.className, s.roomNumber, s.emergencyPhone || '', s.totalBilled.toString(), s.totalPaid.toString(), s.totalDue.toString()]);
-      });
-    } else if (reportType === 'discounts' && discountData) {
-      filename = 'PBPS-Discount-Concessions-Report.csv';
-      rows.push(['Rule Name', 'Discount (INR)', 'Approved At']);
-      discountData.discounts?.forEach((d: any) => {
-        rows.push([d.discountRuleId || 'Custom Rule', d.amount.toString(), d.createdAt]);
-      });
-    } else if (reportType === 'staff' && staffData) {
-      filename = 'PBPS-Staff-Collection-Summary.csv';
-      rows.push(['Officer Name', 'Username', 'Role', 'Transactions', 'Total Amount (INR)']);
-      staffData.forEach((u: any) => {
-        rows.push([u.fullName, u.username, u.role, u.transactionsCount.toString(), u.totalAmount.toString()]);
-      });
-    } else if (reportType === 'cancelled' && cancelledData) {
-      filename = 'PBPS-Cancelled-Payments-Audit.csv';
-      rows.push(['Receipt #', 'Student Name', 'Admission #', 'Amount (INR)', 'Payment Method', 'Cancelled At', 'Cancellation Reason', 'Officer']);
-      cancelledData.forEach((c: any) => {
-        rows.push([
-          c.receiptNumber,
-          c.studentName,
-          c.admissionNumber,
-          c.amount.toString(),
-          c.paymentMethod,
-          new Date(c.cancelledAt).toLocaleString('en-IN'),
-          c.cancellationReason,
-          typeof c.collectedBy === 'object' ? (c.collectedBy?.fullName || c.collectedBy?.username || 'Staff') : (c.collectedBy || 'Staff')
-        ]);
-      });
+  const getReportTitle = (): string => {
+    switch (reportType) {
+      case 'daily': return `Daily Collection Report (${selectedDate})`;
+      case 'monthly': return `Annual Collection Trend (${selectedYear})`;
+      case 'classWise': return 'Class-Wise Fee Collection & Dues Analysis';
+      case 'feeHead': return 'Fee-Head-Wise Collection & Dues Report';
+      case 'hostel': return 'Hostel Boarders & Fee Status Report';
+      case 'discounts': return 'Fee Discounts & Concessions Report';
+      case 'staff': return 'Staff Counter Collections Performance Report';
+      case 'cancelled': return 'Cancelled Payments Audit Trail';
+      default: return 'Institutional Report';
     }
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.map(x => `"${(x || '').toString().replace(/"/g, '""')}"`).join(',')).join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const fetchPdfBlob = async (): Promise<{ blob: Blob; filename: string }> => {
+    const params = new URLSearchParams();
+    if (reportType === 'daily') params.append('date', selectedDate);
+    if (reportType === 'monthly') params.append('year', selectedYear.toString());
 
-  const downloadReportPdf = async () => {
+    // Use apiClient which automatically adds the correct 'edumanage_token' and handles token refresh
+    const res = await apiClient.get(`/reports/${reportType}/pdf?${params.toString()}`, {
+      responseType: 'blob'
+    });
+
+    const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/pdf' });
+    const contentDisp = res.headers ? (res.headers['content-disposition'] || res.headers['Content-Disposition']) : null;
+    let filename = `${reportType}_report.pdf`;
+    if (contentDisp && contentDisp.includes('filename=')) {
+      filename = contentDisp.split('filename=')[1].replace(/"/g, '').trim();
+    }
+    return { blob, filename };
+  };
+
+  const handlePrintPdf = async () => {
     try {
-      setDownloading('pdf');
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      if (reportType === 'daily') params.append('date', selectedDate);
-      if (reportType === 'monthly') params.append('year', selectedYear.toString());
-      
-      const res = await fetch(`/api/reports/${reportType}/pdf?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('PDF export failed');
-      const blob = await res.blob();
+      setGeneratingPdf('print');
+      const { blob } = await fetchPdfBlob();
+      if (printPreviewUrl) {
+        window.URL.revokeObjectURL(printPreviewUrl);
+      }
+      const blobUrl = window.URL.createObjectURL(blob);
+      setPrintPreviewUrl(blobUrl);
+      setPrintPreviewTitle(getReportTitle());
+      setShowPrintModal(true);
+    } catch (err: any) {
+      console.error('Error generating print view:', err);
+      let errorMsg = err.response?.data?.message || err.message;
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          errorMsg = parsed.message || errorMsg;
+        } catch {}
+      }
+      toast.error(errorMsg || 'Failed to generate PDF for print preview');
+    } finally {
+      setGeneratingPdf(null);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    try {
+      setGeneratingPdf('download');
+      const { blob, filename } = await fetchPdfBlob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      const contentDisp = res.headers.get('Content-Disposition');
-      let filename = `${reportType}_report.pdf`;
-      if (contentDisp && contentDisp.includes('filename=')) {
-        filename = contentDisp.split('filename=')[1].replace(/"/g, '').trim();
-      }
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      console.error('Failed to download PDF:', err);
-    } finally {
-      setDownloading(null);
-    }
-  };
-
-  const downloadReportExcel = async () => {
-    try {
-      setDownloading('excel');
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      if (reportType === 'daily') params.append('date', selectedDate);
-      if (reportType === 'monthly') params.append('year', selectedYear.toString());
-      
-      const res = await fetch(`/api/reports/${reportType}/excel?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Excel export failed');
-      const blob = await res.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      const contentDisp = res.headers.get('Content-Disposition');
-      let filename = `${reportType}_report.xlsx`;
-      if (contentDisp && contentDisp.includes('filename=')) {
-        filename = contentDisp.split('filename=')[1].replace(/"/g, '').trim();
+      toast.success('Report PDF downloaded successfully');
+    } catch (err: any) {
+      console.error('Error downloading PDF:', err);
+      let errorMsg = err.response?.data?.message || err.message;
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          errorMsg = parsed.message || errorMsg;
+        } catch {}
       }
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      console.error('Failed to download Excel:', err);
+      toast.error(errorMsg || 'Failed to download report PDF');
     } finally {
-      setDownloading(null);
+      setGeneratingPdf(null);
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrintFromModal = () => {
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      try {
+        iframeRef.current.contentWindow.focus();
+        iframeRef.current.contentWindow.print();
+      } catch (e) {
+        console.warn('Iframe print error, falling back to window.print():', e);
+        window.print();
+      }
+    }
+  };
+
+  const closePrintModal = () => {
+    setShowPrintModal(false);
+    if (printPreviewUrl) {
+      window.URL.revokeObjectURL(printPreviewUrl);
+      setPrintPreviewUrl(null);
+    }
   };
 
   const tabs: Array<{ id: ReportTab; label: string }> = [
@@ -259,51 +220,49 @@ export const ReportsPage: React.FC = () => {
             Institutional Audit & Revenue Reports
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Complete institutional reports according to Director specifications with professional PDF, Excel (.xlsx), and Print layouts.
+            Complete institutional reports according to Director specifications with high-resolution PDF and Print layouts.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Print Button */}
+          {/* Print PDF Button */}
           <button
-            onClick={handlePrint}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
-            title="Print current report view"
+            onClick={handlePrintPdf}
+            disabled={generatingPdf !== null}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs hover:shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            title="Generate PDF report and open print preview"
           >
-            <Printer className="h-4 w-4 text-slate-600" />
-            <span>Print</span>
+            {generatingPdf === 'print' ? (
+              <>
+                <Loader2 className="h-4 w-4 text-indigo-600 animate-spin" />
+                <span>Preparing Print...</span>
+              </>
+            ) : (
+              <>
+                <Printer className="h-4 w-4 text-indigo-600" />
+                <span>Print PDF</span>
+              </>
+            )}
           </button>
 
-          {/* Download Master Excel Button */}
+          {/* Download PDF Button */}
           <button
-            onClick={downloadReportExcel}
-            disabled={downloading === 'excel'}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 shadow-2xs transition-colors disabled:opacity-50"
-            title="Download formal Excel file with embedded logo, auto-filter, and formula totals"
+            onClick={handleDownloadPdf}
+            disabled={generatingPdf !== null}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs hover:shadow-md transition-all cursor-pointer disabled:opacity-50"
+            title="Directly download official PDF report"
           >
-            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-            <span>{downloading === 'excel' ? 'Exporting...' : 'Excel (.xlsx)'}</span>
-          </button>
-
-          {/* Download Master PDF Button */}
-          <button
-            onClick={downloadReportPdf}
-            disabled={downloading === 'pdf'}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg border border-rose-300 bg-rose-50 text-xs font-semibold text-rose-800 hover:bg-rose-100 shadow-2xs transition-colors disabled:opacity-50"
-            title="Download unified formal PDF with school emblem, KPI cards, and page numbers"
-          >
-            <FileText className="h-4 w-4 text-rose-600" />
-            <span>{downloading === 'pdf' ? 'Generating...' : 'PDF Report'}</span>
-          </button>
-
-          {/* CSV Fallback Button */}
-          <button
-            onClick={exportCsv}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-100 text-xs font-medium text-slate-600 hover:bg-slate-200 transition-colors"
-            title="Export raw CSV data"
-          >
-            <Download className="h-3.5 w-3.5 text-slate-500" />
-            <span>CSV</span>
+            {generatingPdf === 'download' ? (
+              <>
+                <Loader2 className="h-4 w-4 text-white animate-spin" />
+                <span>Generating PDF...</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 text-white" />
+                <span>Download PDF</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -764,6 +723,84 @@ export const ReportsPage: React.FC = () => {
             </div>
           )}
         </>
+      )}
+
+      {/* PRINT PREVIEW MODAL */}
+      {showPrintModal && printPreviewUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6 no-print">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/90">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-xl">
+                  <Printer className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                    Print Preview — {printPreviewTitle}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Official verified PDF document with school emblem, summary cards, and ledger totals
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintFromModal}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs hover:shadow-md transition-all cursor-pointer"
+                  title="Send to physical or system printer"
+                >
+                  <Printer className="h-4 w-4" />
+                  <span>Print Now</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const a = document.createElement('a');
+                    a.href = printPreviewUrl;
+                    a.download = `${reportType}_report.pdf`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    toast.success('Report PDF downloaded');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                  title="Download copy as PDF"
+                >
+                  <Download className="h-4 w-4 text-slate-600" />
+                  <span className="hidden sm:inline">Save PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closePrintModal}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer text-sm font-bold ml-1"
+                  title="Close preview"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Embedded PDF */}
+            <div className="flex-1 p-2 sm:p-4 bg-slate-100 flex flex-col">
+              <iframe
+                ref={iframeRef}
+                src={`${printPreviewUrl}#toolbar=1&view=FitH`}
+                className="w-full h-full rounded-xl border border-slate-200 bg-white shadow-xs"
+                title="Report PDF Print Preview"
+                onLoad={() => {
+                  try {
+                    iframeRef.current?.contentWindow?.focus();
+                  } catch {}
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

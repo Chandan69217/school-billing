@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
-if (!process.env.DATABASE_URL || process.env.DATABASE_URL.includes('[YOUR-PASSWORD]') || process.env.DATABASE_URL.includes('vtrtlxvkrxpfdweoxqel')) {
+if (!process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith('postgresql') || process.env.DATABASE_URL.includes('[YOUR-PASSWORD]') || process.env.DATABASE_URL.includes('vtrtlxvkrxpfdweoxqel')) {
   process.env.DATABASE_URL = 'mysql://school_user:SchoolPass123!@127.0.0.1:3306/school_management';
 }
 

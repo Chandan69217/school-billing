@@ -11,6 +11,9 @@ import * as payCtrl from '../controllers/paymentController.js';
 import * as rcptCtrl from '../controllers/receiptController.js';
 import * as repCtrl from '../controllers/reportController.js';
 import * as sysCtrl from '../controllers/systemControllers.js';
+import * as transportCtrl from '../controllers/transportController.js';
+import * as storeCtrl from '../controllers/storeController.js';
+import * as discCtrl from '../controllers/discountController.js';
 
 const router = Router();
 
@@ -21,6 +24,11 @@ router.post('/auth/login', authCtrl.login);
 router.get('/auth/me', authenticateJwt, authCtrl.getMe);
 router.post('/auth/refresh', authCtrl.refreshToken);
 router.post('/auth/change-password', authenticateJwt, authCtrl.changePassword);
+router.post('/auth/forgot-password', authCtrl.forgotPassword);
+router.post('/auth/resend-reset-link', authCtrl.resendResetLink);
+router.post('/auth/verify-reset-token', authCtrl.verifyResetToken);
+router.post('/auth/reset-password', authCtrl.resetPasswordWithToken);
+router.get('/public/settings', sysCtrl.getSettings);
 
 // =============================================================
 // Dashboard
@@ -82,6 +90,8 @@ router.get('/slc/:slcId/pdf', admitCtrl.getSlcPdf);
 // =============================================================
 router.get('/fee-types', authenticateJwt, requirePermission('fee.view'), feeCtrl.getFeeTypes);
 router.post('/fee-types', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.createFeeType);
+router.put('/fee-types/:id', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.updateFeeType);
+router.delete('/fee-types/:id', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.deleteFeeType);
 
 router.get('/fee-structures', authenticateJwt, requirePermission('fee.view'), feeCtrl.getFeeStructures);
 router.post('/fee-structures', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.createFeeStructure);
@@ -92,9 +102,62 @@ router.get('/fees/student-bill/:studentId', authenticateJwt, requirePermission('
 router.post('/fees/generate-monthly', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.generateMonthlyFees);
 router.get('/fees/pending', authenticateJwt, requirePermission('due.view'), feeCtrl.getPendingFees);
 
-// Discounts
-router.get('/discounts/rules', authenticateJwt, feeCtrl.getDiscountRules);
-router.post('/discounts/rules', authenticateJwt, requirePermission('fee.structure.manage'), feeCtrl.createDiscountRule);
+// =============================================================
+// Transport Management & Billing
+// =============================================================
+router.get('/transport/routes', authenticateJwt, transportCtrl.getRoutes);
+router.get('/transport/routes/:id', authenticateJwt, transportCtrl.getRouteById);
+router.post('/transport/routes', authenticateJwt, requirePermission('transport.manage'), transportCtrl.createRoute);
+router.put('/transport/routes/:id', authenticateJwt, requirePermission('transport.manage'), transportCtrl.updateRoute);
+router.delete('/transport/routes/:id', authenticateJwt, requirePermission('transport.manage'), transportCtrl.deleteRoute);
+
+router.post('/transport/stops', authenticateJwt, requirePermission('transport.manage'), transportCtrl.createStop);
+router.post('/transport/routes/:routeId/stops', authenticateJwt, requirePermission('transport.manage'), transportCtrl.createStop);
+router.put('/transport/stops/:id', authenticateJwt, requirePermission('transport.manage'), transportCtrl.updateStop);
+router.delete('/transport/stops/:id', authenticateJwt, requirePermission('transport.manage'), transportCtrl.deleteStop);
+
+router.get('/transport/students/:studentId', authenticateJwt, transportCtrl.getStudentTransport);
+router.post('/transport/assign', authenticateJwt, requirePermission('transport.assign'), transportCtrl.assignStudentTransport);
+router.post('/transport/students/:studentId/assign', authenticateJwt, requirePermission('transport.assign'), transportCtrl.assignStudentTransport);
+router.put('/transport/students/:studentId/change', authenticateJwt, requirePermission('transport.assign'), transportCtrl.changeStudentTransport);
+router.put('/transport/students/:studentId/change-stop', authenticateJwt, requirePermission('transport.assign'), transportCtrl.changeStudentTransport);
+router.put('/transport/students/:studentId/stop', authenticateJwt, requirePermission('transport.assign'), transportCtrl.stopStudentTransport);
+router.get('/transport/report', authenticateJwt, requirePermission('report.view'), transportCtrl.getTransportReport);
+router.get('/transport/audit-logs', authenticateJwt, transportCtrl.getTransportAuditLogs);
+
+// =============================================================
+// Store / Books & Uniform POS
+// =============================================================
+router.get('/store/categories', authenticateJwt, storeCtrl.getCategories);
+router.post('/store/categories', authenticateJwt, requirePermission('store.manage'), storeCtrl.createCategory);
+router.get('/store/items', authenticateJwt, storeCtrl.getItems);
+router.get('/store/items/:id', authenticateJwt, storeCtrl.getItemById);
+router.post('/store/items', authenticateJwt, requirePermission('store.manage'), storeCtrl.createItem);
+router.put('/store/items/:id', authenticateJwt, requirePermission('store.manage'), storeCtrl.updateItem);
+router.post('/store/stock-adjustment', authenticateJwt, requirePermission('store.manage'), storeCtrl.adjustStock);
+router.get('/store/stock-report', authenticateJwt, requirePermission('report.view'), storeCtrl.getStockReport);
+
+router.post('/store/sales', authenticateJwt, requirePermission('store.sell'), storeCtrl.createSale);
+router.get('/store/sales', authenticateJwt, storeCtrl.getSales);
+router.get('/store/sales/:id', authenticateJwt, storeCtrl.getSaleById);
+router.get('/store/sales/:id/pdf', storeCtrl.getSalePdf);
+router.post('/store/sales/:id/return', authenticateJwt, requirePermission('store.return'), storeCtrl.processReturn);
+router.post('/store/sales/:id/cancel', authenticateJwt, requirePermission('store.manage'), storeCtrl.cancelSale);
+
+// =============================================================
+// Discounts & Concession Rules
+// =============================================================
+router.get('/discounts/rules', authenticateJwt, discCtrl.getDiscountRules);
+router.get('/discounts/rules/:id', authenticateJwt, discCtrl.getDiscountRuleById);
+router.post('/discounts/rules', authenticateJwt, requirePermission('discount.manage'), discCtrl.createDiscountRule);
+router.put('/discounts/rules/:id', authenticateJwt, requirePermission('discount.manage'), discCtrl.updateDiscountRule);
+router.delete('/discounts/rules/:id', authenticateJwt, requirePermission('discount.delete'), discCtrl.deleteDiscountRule);
+router.post('/discounts/rules/:id/restore', authenticateJwt, requirePermission('discount.manage'), discCtrl.restoreDiscountRule);
+
+router.get('/discounts/students/:studentId', authenticateJwt, discCtrl.getStudentDiscounts);
+router.post('/discounts/students/:studentId/assign', authenticateJwt, requirePermission('discount.assign'), discCtrl.assignDiscountToStudent);
+router.put('/discounts/applications/:id/end', authenticateJwt, requirePermission('discount.assign'), discCtrl.endStudentDiscount);
+router.get('/discounts/students/:studentId/siblings', authenticateJwt, discCtrl.detectSiblings);
 router.get('/discounts/pending', authenticateJwt, requirePermission('discount.approve'), feeCtrl.getPendingDiscountRequests);
 router.put('/discounts/requests/:id', authenticateJwt, requirePermission('discount.approve'), feeCtrl.approveDiscountRequest);
 
@@ -143,12 +206,13 @@ router.get('/reports/:type/excel', authenticateJwt, requirePermission('report.vi
 // =============================================================
 router.get('/staff', authenticateJwt, requirePermission('user.manage'), sysCtrl.getStaffList);
 router.post('/staff', authenticateJwt, requirePermission('user.manage'), sysCtrl.createStaff);
+router.put('/staff/:id', authenticateJwt, requirePermission('user.manage'), sysCtrl.updateStaff);
 router.put('/staff/:id/status', authenticateJwt, requirePermission('user.manage'), sysCtrl.toggleStaffStatus);
 router.put('/staff/:id/reset-password', authenticateJwt, requirePermission('user.manage'), sysCtrl.resetStaffPassword);
 
 router.get('/settings', authenticateJwt, sysCtrl.getSettings);
 router.put('/settings', authenticateJwt, requirePermission('settings.manage'), sysCtrl.updateSettings);
-router.post('/settings/upload-logo', authenticateJwt, requirePermission('settings.manage'), logoUpload.single('logo'), sysCtrl.uploadSchoolLogo);
+router.post('/settings/upload-logo', authenticateJwt, requirePermission('settings.manage'), logoUpload.single('logo') as any, sysCtrl.uploadSchoolLogo);
 router.post('/settings/reset-logo', authenticateJwt, requirePermission('settings.manage'), sysCtrl.resetSchoolLogo);
 
 router.get('/backup/export', authenticateJwt, requirePermission('backup.manage'), sysCtrl.exportBackup);
@@ -156,6 +220,9 @@ router.post('/backup/restore', authenticateJwt, requirePermission('backup.manage
 
 router.get('/notifications', authenticateJwt, sysCtrl.getNotifications);
 router.post('/notifications/mark-read', authenticateJwt, sysCtrl.markNotificationsRead);
-router.get('/audit-logs', authenticateJwt, requirePermission('audit.view'), sysCtrl.getAuditLogs);
+router.delete('/notifications/:id', authenticateJwt, sysCtrl.deleteNotification);
+router.delete('/notifications', authenticateJwt, sysCtrl.clearAllNotifications);
+router.get('/audit-logs', authenticateJwt, sysCtrl.getAuditLogs);
+router.get('/system/audit-logs', authenticateJwt, sysCtrl.getAuditLogs);
 
 export default router;

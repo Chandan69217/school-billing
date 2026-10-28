@@ -3,7 +3,11 @@ import path from 'path';
 
 dotenv.config({ override: true });
 
-const resolvedDbUrl = process.env.DATABASE_URL || '';
+let resolvedDbUrl = process.env.DATABASE_URL || '';
+if (!resolvedDbUrl || resolvedDbUrl.startsWith('postgresql') || resolvedDbUrl.includes('[YOUR-PASSWORD]') || resolvedDbUrl.includes('vtrtlxvkrxpfdweoxqel')) {
+  resolvedDbUrl = 'mysql://school_user:SchoolPass123!@127.0.0.1:3306/school_management';
+}
+process.env.DATABASE_URL = resolvedDbUrl;
 
 export const config = {
   port: 3000,

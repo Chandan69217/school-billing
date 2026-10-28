@@ -209,7 +209,7 @@ export const getReceiptById = async (req: Request, res: Response): Promise<void>
           collectedBy: receipt.payment.collectedBy?.fullName || 'Fee Counter Staff',
           academicYear: receipt.payment.academicYear?.name || '2026-27'
         },
-        student: {
+        studentDetails: {
           id: receipt.student.id,
           name: `${receipt.student.firstName} ${receipt.student.lastName}`.trim(),
           admissionNumber: receipt.student.admissionNumber,
@@ -287,42 +287,98 @@ export const recordReprint = async (req: AuthenticatedRequest, res: Response): P
 // Download Printable Receipt PDF
 // =============================================================
 
+// Helper to fetch receipt with all associated records
+async function fetchFullReceipt(id: string) {
+  return prisma.receipt.findUnique({
+    where: { id },
+    include: {
+      payment: {
+        include: {
+          collectedBy: { select: { fullName: true } },
+          academicYear: true,
+          items: {
+            include: {
+              studentFee: {
+                include: { feeType: true }
+              }
+            }
+          }
+        }
+      },
+      student: {
+        include: {
+          academicRecords: {
+            include: { class: true, section: true },
+            take: 1,
+            orderBy: { createdAt: 'desc' }
+          },
+          parents: {
+            include: { parent: true },
+            take: 1
+          }
+        }
+      }
+    }
+  });
+}
+
+// Helper to construct normalized ReceiptPdfData payload
+function formatReceiptData(receipt: any, schoolSettings: any, isDuplicate: boolean) {
+  const academic = receipt.student?.academicRecords?.[0];
+  const parent = receipt.student?.parents?.[0]?.parent;
+
+  const items = receipt.payment?.items?.map((item: any) => ({
+    title: item.studentFee?.title || item.studentFee?.feeType?.name || 'Fee Head Payment',
+    amount: Number(item.amountPaid || 0),
+    month: item.studentFee?.month ? `Month ${item.studentFee.month}` : 'Current Session'
+  })) || [];
+
+  return {
+    school: {
+      logoUrl: schoolSettings?.logoUrl || '/assets/images/school-logo.png',
+      name: schoolSettings?.schoolName || 'Pragya Bharti Public School',
+      tagline: schoolSettings?.tagline || undefined,
+      address: schoolSettings?.address || 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
+      phone: schoolSettings?.phone || '+91 9430442800, +91 7247271212, or 0631-2215243',
+      email: schoolSettings?.email || 'pragyabhartigayabih@gmail.com',
+      registrationNumber: schoolSettings?.registrationNumber || undefined,
+      receiptFooter: schoolSettings?.receiptFooter || 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
+      authorizedSignatory: schoolSettings?.authorizedSignatory || 'Accounts Officer, PBPS'
+    },
+    receiptNumber: receipt.receiptNumber,
+    isDuplicate,
+    paymentDate: new Date(receipt.payment?.paidAt || Date.now()).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    }),
+    paymentMethod: receipt.payment?.paymentMethod || 'CASH',
+    transactionRef: receipt.payment?.transactionRef || undefined,
+    student: {
+      admissionNumber: receipt.student?.admissionNumber || 'N/A',
+      name: `${receipt.student?.firstName || ''} ${receipt.student?.lastName || ''}`.trim() || 'Student',
+      className: `${academic?.class?.name || 'Class'} (${receipt.student?.isHostelStudent ? 'Hostel' : 'Day Scholar'})`,
+      sectionName: academic?.section?.name || 'A',
+      rollNumber: academic?.rollNumber || '',
+      fatherName: parent?.fatherName || parent?.motherName || 'Parent / Guardian',
+      phone: parent?.primaryPhone || 'N/A'
+    },
+    academicYear: receipt.payment?.academicYear?.name || '2026-27',
+    items: items.length > 0 ? items : [{ title: 'Fee Payment', amount: Number(receipt.paidAmount || 0) }],
+    totalAmount: Number(receipt.totalAmount || 0),
+    previousBalance: Number(receipt.previousBalance || 0),
+    paidAmount: Number(receipt.paidAmount || 0),
+    remainingBalance: Number(receipt.remainingBalance || 0),
+    collectedBy: receipt.payment?.collectedBy?.fullName || 'Counter Staff'
+  };
+}
+
 export const getReceiptPdf = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const isReprint = req.query.isReprint === 'true';
 
-    const receipt = await prisma.receipt.findUnique({
-      where: { id },
-      include: {
-        payment: {
-          include: {
-            collectedBy: { select: { fullName: true } },
-            academicYear: true,
-            items: {
-              include: {
-                studentFee: {
-                  include: { feeType: true }
-                }
-              }
-            }
-          }
-        },
-        student: {
-          include: {
-            academicRecords: {
-              include: { class: true, section: true },
-              take: 1,
-              orderBy: { createdAt: 'desc' }
-            },
-            parents: {
-              include: { parent: true },
-              take: 1
-            }
-          }
-        }
-      }
-    });
+    const receipt = await fetchFullReceipt(id);
 
     if (!receipt) {
       res.status(404).json({ success: false, message: 'Receipt not found' });
@@ -336,68 +392,10 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
       });
     }
 
-    const school = await prisma.schoolSettings.findFirst() || {
-      schoolName: 'Pragya Bharti Public School',
-      tagline: 'Knowledge, Character & Excellence (PBPS)',
-      logoUrl: '/assets/images/school-logo.png',
-      address: 'Alipur, P.O. Buniadgang, Manpur, Gaya, Bihar – 823003',
-      phone: '+91 9430442800, +91 7247271212, or 0631-2215243',
-      email: 'pragyabhartigayabih@gmail.com',
-      registrationNumber: 'SCH-REG-2024-9981',
-      receiptFooter: 'This is a computer generated fee receipt. Pragya Bharti Public School (PBPS).',
-      authorizedSignatory: 'Accounts Officer, PBPS'
-    };
-
-    const academic = receipt.student.academicRecords[0];
-    const parent = receipt.student.parents[0]?.parent;
-
-    const items = receipt.payment.items.map(item => ({
-      title: item.studentFee.title,
-      amount: Number(item.amountPaid),
-      month: item.studentFee.month ? `Month ${item.studentFee.month}` : 'Annual'
-    }));
-
+    const schoolSettings = await prisma.schoolSettings.findFirst();
     const isDuplicate = receipt.isDuplicate || receipt.reprintCount > 0 || isReprint;
-    const format = (req.query.format === 'a5' || req.query.format === 'A5') ? 'A5' : 'A4';
-
-    const pdfBuffer = await generateReceiptPdf({
-      school: {
-        name: school.schoolName,
-        tagline: school.tagline || undefined,
-        address: school.address,
-        phone: school.phone,
-        email: school.email,
-        registrationNumber: school.registrationNumber || undefined,
-        receiptFooter: school.receiptFooter || undefined,
-        authorizedSignatory: school.authorizedSignatory || undefined
-      },
-      receiptNumber: receipt.receiptNumber,
-      isDuplicate,
-      format,
-      paymentDate: new Date(receipt.payment.paidAt).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      }),
-      paymentMethod: receipt.payment.paymentMethod,
-      transactionRef: receipt.payment.transactionRef || undefined,
-      student: {
-        admissionNumber: receipt.student.admissionNumber,
-        name: `${receipt.student.firstName} ${receipt.student.lastName}`,
-        className: `${academic?.class?.name || 'Class'} (${receipt.student.isHostelStudent ? 'Hostel' : 'Day Scholar'})`,
-        sectionName: academic?.section?.name || 'A',
-        rollNumber: academic?.rollNumber || '',
-        fatherName: parent?.fatherName || parent?.motherName || 'Parent',
-        phone: parent?.primaryPhone || 'N/A'
-      },
-      academicYear: receipt.payment.academicYear?.name || '2026-27',
-      items: items.length > 0 ? items : [{ title: 'Fee Payment', amount: Number(receipt.paidAmount) }],
-      totalAmount: Number(receipt.totalAmount),
-      previousBalance: Number(receipt.previousBalance),
-      paidAmount: Number(receipt.paidAmount),
-      remainingBalance: Number(receipt.remainingBalance),
-      collectedBy: receipt.payment.collectedBy?.fullName || 'Counter Staff'
-    });
+    const pdfData = formatReceiptData(receipt, schoolSettings, isDuplicate);
+    const pdfBuffer = await generateReceiptPdf(pdfData);
 
     const safeStudentName = `${receipt.student.firstName}_${receipt.student.lastName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
     const safeReceiptNo = receipt.receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -408,46 +406,61 @@ export const getReceiptPdf = async (req: Request, res: Response): Promise<void> 
     res.send(pdfBuffer);
   } catch (error: any) {
     console.error('getReceiptPdf error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message || 'Error generating receipt PDF' });
   }
 };
 
 export const emailReceipt = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const recipientEmail = req.body.email;
+    const recipientEmail = (req.body.email || '').trim();
 
-    const receipt = await prisma.receipt.findUnique({
-      where: { id },
-      include: {
-        payment: { include: { collectedBy: true, academicYear: true, items: { include: { studentFee: true } } } },
-        student: { include: { parents: { include: { parent: true } } } }
-      }
-    });
+    const receipt = await fetchFullReceipt(id);
 
     if (!receipt) {
       res.status(404).json({ success: false, message: 'Receipt not found' });
       return;
     }
 
-    const email = recipientEmail || receipt.student.parents[0]?.parent?.email;
-    if (!email) {
-      res.status(400).json({ success: false, message: 'No recipient email available' });
+    const parent = receipt.student?.parents?.[0]?.parent;
+    const email = recipientEmail || parent?.email;
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ success: false, message: 'Please provide a valid recipient email address' });
       return;
     }
 
-    const pdfBuffer = await generateReceiptPdf(receipt as any);
+    const schoolSettings = await prisma.schoolSettings.findFirst();
+    const isDuplicate = receipt.isDuplicate || receipt.reprintCount > 0;
+    const pdfData = formatReceiptData(receipt, schoolSettings, isDuplicate);
+    const pdfBuffer = await generateReceiptPdf(pdfData);
 
-    await sendReceiptEmail({
+    const studentFullName = `${receipt.student?.firstName || ''} ${receipt.student?.lastName || ''}`.trim() || 'Student';
+
+    const emailResult = await sendReceiptEmail({
       receiptId: receipt.id,
       recipientEmail: email,
-      studentName: `${receipt.student.firstName} ${receipt.student.lastName}`.trim(),
+      studentName: studentFullName,
       receiptNumber: receipt.receiptNumber,
       pdfBuffer
     });
 
-    res.json({ success: true, message: `Receipt successfully emailed to ${email}` });
+    if (!emailResult.success) {
+      res.status(500).json({ success: false, message: emailResult.message || 'Failed to dispatch email' });
+      return;
+    }
+
+    await logAudit({
+      userId: req.user?.id || null,
+      userName: req.user?.fullName,
+      action: 'RECEIPT_EMAILED',
+      module: 'Receipt',
+      recordId: receipt.id,
+      newData: { receiptNumber: receipt.receiptNumber, recipientEmail: email, logId: emailResult.logId }
+    });
+
+    res.json({ success: true, message: `Receipt successfully emailed to ${email}`, logId: emailResult.logId });
   } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('emailReceipt error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to generate receipt PDF or send email' });
   }
 };

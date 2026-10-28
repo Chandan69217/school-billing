@@ -14,7 +14,12 @@ import { ReceiptsPage } from './pages/ReceiptsPage.js';
 import { ReportsPage } from './pages/ReportsPage.js';
 import { StaffPage } from './pages/StaffPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
+import { TransportPage } from './pages/TransportPage.js';
+import { StorePage } from './pages/StorePage.js';
+import { DiscountsPage } from './pages/DiscountsPage.js';
 import { LoginPage } from './pages/LoginPage.js';
+import { ResetPasswordPage } from './pages/ResetPasswordPage.js';
+import { ChangePasswordModal } from './components/auth/ChangePasswordModal.js';
 import { FeeCollectionModal } from './components/fees/FeeCollectionModal.js';
 import { ReceiptModal } from './components/receipts/ReceiptModal.js';
 import { ErrorBoundary } from './components/common/ErrorBoundary.js';
@@ -69,6 +74,15 @@ const ProtectedLayout: React.FC<{
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Forced Password Change Modal for new accounts / admin reset */}
+      {Boolean(user?.mustChangePassword) && (
+        <ChangePasswordModal
+          isOpen={true}
+          onClose={() => {}}
+          isForced={true}
+        />
+      )}
     </div>
   );
 };
@@ -96,8 +110,9 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            {/* Public Login Route */}
+            {/* Public Auth Routes */}
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             {/* Protected Shell */}
             <Route
@@ -151,6 +166,9 @@ export default function App() {
                 path="/receipts"
                 element={<ReceiptsPage onOpenReceipt={handleOpenReceipt} />}
               />
+              <Route path="/transport" element={<TransportPage />} />
+              <Route path="/store" element={<StorePage />} />
+              <Route path="/discounts" element={<DiscountsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/staff" element={<StaffPage />} />
               <Route path="/settings" element={<SettingsPage />} />

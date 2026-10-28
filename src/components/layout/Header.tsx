@@ -10,10 +10,22 @@ import {
   Calendar,
   X,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  KeyRound,
+  LogOut,
+  User as UserIcon,
+  Shield,
+  CheckCircle2,
+  AlertTriangle,
+  Info,
+  Trash2,
+  CheckCheck,
+  BellOff
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext.js';
 import { apiClient } from '../../api/client.js';
+import { ChangePasswordModal } from '../auth/ChangePasswordModal.js';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -39,6 +51,11 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenFeeCollec
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+
+  // User Profile Menu & Change Password Modal state
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Active session state
   const [activeSessionName, setActiveSessionName] = useState('2026-27');
@@ -132,23 +149,115 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenFeeCollec
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
         setShowNotifications(false);
       }
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const formatTimeAgo = (dateStr: string): string => {
+    try {
+      const diffMs = Date.now() - new Date(dateStr).getTime();
+      const diffSec = Math.floor(diffMs / 1000);
+      if (diffSec < 60) return 'Just now';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHours = Math.floor(diffMin / 60);
+      if (diffHours < 24) return `${diffHours}h ago`;
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return new Date(dateStr).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  const renderNotificationIcon = (type?: string) => {
+    switch (type) {
+      case 'SUCCESS':
+        return (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
+            <CheckCircle2 className="h-4 w-4" />
+          </div>
+        );
+      case 'WARNING':
+      case 'ALERT':
+        return (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600">
+            <AlertTriangle className="h-4 w-4" />
+          </div>
+        );
+      case 'INFO':
+      default:
+        return (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+            <Info className="h-4 w-4" />
+          </div>
+        );
+    }
+  };
+
+  const handleNotificationClick = async (n: any) => {
+    if (!n.isRead) {
+      try {
+        await apiClient.post('/notifications/mark-read', { id: n.id });
+        setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, isRead: true } : item));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      } catch (e) {
+        console.error('Failed to mark notification read:', e);
+      }
+    }
+    if (n.linkUrl) {
+      setShowNotifications(false);
+      navigate(n.linkUrl);
+    }
+  };
+
+  const handleDeleteNotification = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    try {
+      await apiClient.delete(`/notifications/${id}`);
+      const target = notifications.find(n => n.id === id);
+      if (target && !target.isRead) {
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      toast.success('Notification removed');
+    } catch (e) {
+      console.error('Failed to delete notification:', e);
+      toast.error('Failed to remove notification');
+    }
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await apiClient.delete('/notifications');
+      setNotifications([]);
+      setUnreadCount(0);
+      toast.success('All notifications cleared');
+    } catch (e) {
+      console.error('Failed to clear all notifications:', e);
+      toast.error('Failed to clear notifications');
+    }
+  };
 
   const markAllRead = async () => {
     try {
       await apiClient.post('/notifications/mark-read');
       setUnreadCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      toast.success('All notifications marked as read');
     } catch (e) {
       console.error(e);
+      toast.error('Failed to mark all as read');
     }
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-3 sm:px-4 md:px-8 backdrop-blur-md">
+    <>
+      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-3 sm:px-4 md:px-8 backdrop-blur-md">
       {/* Mobile Header Mode: ☰  Page Title  [actions] 🔔 */}
       <div className="flex md:hidden items-center justify-between w-full gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -203,31 +312,92 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenFeeCollec
 
             {/* Mobile Notifications Dropdown */}
             {showNotifications && (
-              <div className="fixed right-2 left-2 sm:left-auto sm:right-0 top-16 mt-1 sm:w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl z-50 max-h-[80vh] overflow-y-auto">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                  <span className="text-xs font-bold text-slate-900">Notifications</span>
-                  {unreadCount > 0 && (
-                    <button
-                      onClick={markAllRead}
-                      className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 py-1 px-1.5"
-                    >
-                      Mark all read
-                    </button>
-                  )}
+              <div className="fixed right-2 left-2 sm:left-auto sm:right-0 top-16 mt-1 sm:w-96 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 overflow-hidden">
+                <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-b border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900">Notifications</span>
+                    {unreadCount > 0 ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-rose-100 text-rose-700 rounded-full">
+                        {unreadCount} new
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-slate-200 text-slate-600 rounded-full">
+                        All read
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={markAllRead}
+                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                      >
+                        <CheckCheck className="h-3.5 w-3.5" />
+                        <span>Mark read</span>
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={handleClearAll}
+                        className="text-[11px] font-medium text-slate-500 hover:text-rose-600 flex items-center gap-0.5 cursor-pointer ml-1"
+                        title="Clear all"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        <span>Clear</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto mt-2">
+
+                <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">
                   {notifications.length === 0 ? (
-                    <div className="py-6 text-center text-xs text-slate-400">
-                      No new notifications
+                    <div className="py-8 px-4 text-center">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 mb-2">
+                        <BellOff className="h-5 w-5" />
+                      </div>
+                      <p className="text-xs font-semibold text-slate-700">No notifications yet</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Real-time alerts for fee payments, admissions, and system events will appear here.</p>
                     </div>
                   ) : (
                     notifications.map((n) => (
-                      <div key={n.id} className={`py-2 px-1 text-xs ${n.isRead ? 'opacity-70' : ''}`}>
-                        <div className="font-semibold text-slate-800">{n.title}</div>
-                        <div className="text-slate-600 text-[11px] mt-0.5">{n.message}</div>
-                        <div className="text-[10px] text-slate-400 mt-1">
-                          {new Date(n.createdAt).toLocaleDateString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      <div
+                        key={n.id}
+                        onClick={() => handleNotificationClick(n)}
+                        className={`group relative flex items-start gap-2.5 p-3 transition-colors cursor-pointer hover:bg-slate-50 ${
+                          n.isRead ? 'bg-white opacity-85 hover:opacity-100' : 'bg-indigo-50/50'
+                        }`}
+                      >
+                        {renderNotificationIcon(n.type)}
+                        <div className="flex-1 min-w-0 pr-6">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-xs ${n.isRead ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
+                              {n.title}
+                            </span>
+                            {!n.isRead && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-600 shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-600 leading-snug mt-0.5 line-clamp-2">
+                            {n.message}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              {formatTimeAgo(n.createdAt)}
+                            </span>
+                            {n.linkUrl && (
+                              <span className="text-[10px] text-indigo-600 font-semibold hover:underline flex items-center gap-0.5">
+                                View details &rarr;
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        <button
+                          onClick={(e) => handleDeleteNotification(e, n.id)}
+                          className="absolute top-2.5 right-2 p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                          title="Remove notification"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     ))
                   )}
@@ -454,31 +624,92 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenFeeCollec
 
           {/* Desktop Notifications Popover */}
           {showNotifications && (
-            <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl z-50">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <span className="text-xs font-bold text-slate-900">Notifications</span>
-                {unreadCount > 0 && (
-                  <button
-                    onClick={markAllRead}
-                    className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
-                  >
-                    Mark all read
-                  </button>
-                )}
+            <div className="absolute right-0 top-full mt-2 w-96 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 overflow-hidden">
+              <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900">Notifications</span>
+                  {unreadCount > 0 ? (
+                    <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-rose-100 text-rose-700 rounded-full">
+                      {unreadCount} new
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium bg-slate-200 text-slate-600 rounded-full">
+                      All read
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={markAllRead}
+                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      <span>Mark all read</span>
+                    </button>
+                  )}
+                  {notifications.length > 0 && (
+                    <button
+                      onClick={handleClearAll}
+                      className="text-[11px] font-medium text-slate-500 hover:text-rose-600 flex items-center gap-0.5 cursor-pointer ml-1"
+                      title="Clear all notifications"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      <span>Clear all</span>
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto mt-2">
+
+              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
                 {notifications.length === 0 ? (
-                  <div className="py-6 text-center text-xs text-slate-400">
-                    No new notifications
+                  <div className="py-8 px-4 text-center">
+                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 mb-2">
+                      <BellOff className="h-5 w-5" />
+                    </div>
+                    <p className="text-xs font-semibold text-slate-700">No notifications yet</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Real-time alerts for fee payments, admissions, and system events will appear here.</p>
                   </div>
                 ) : (
                   notifications.map((n) => (
-                    <div key={n.id} className={`py-2 px-1 text-xs ${n.isRead ? 'opacity-70' : ''}`}>
-                      <div className="font-semibold text-slate-800">{n.title}</div>
-                      <div className="text-slate-600 text-[11px] mt-0.5">{n.message}</div>
-                      <div className="text-[10px] text-slate-400 mt-1">
-                        {new Date(n.createdAt).toLocaleDateString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    <div
+                      key={n.id}
+                      onClick={() => handleNotificationClick(n)}
+                      className={`group relative flex items-start gap-2.5 p-3 transition-colors cursor-pointer hover:bg-slate-50 ${
+                        n.isRead ? 'bg-white opacity-85 hover:opacity-100' : 'bg-indigo-50/50'
+                      }`}
+                    >
+                      {renderNotificationIcon(n.type)}
+                      <div className="flex-1 min-w-0 pr-6">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs ${n.isRead ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
+                            {n.title}
+                          </span>
+                          {!n.isRead && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-indigo-600 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-snug mt-0.5 line-clamp-2">
+                          {n.message}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {formatTimeAgo(n.createdAt)}
+                          </span>
+                          {n.linkUrl && (
+                            <span className="text-[10px] text-indigo-600 font-semibold hover:underline flex items-center gap-0.5">
+                              View details &rarr;
+                            </span>
+                          )}
+                        </div>
                       </div>
+                      <button
+                        onClick={(e) => handleDeleteNotification(e, n.id)}
+                        className="absolute top-2.5 right-2 opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                        title="Remove notification"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   ))
                 )}
@@ -486,7 +717,73 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenFeeCollec
             </div>
           )}
         </div>
-      </div>
-    </header>
+
+        {/* Desktop User Profile Menu */}
+        <div ref={userMenuRef} className="relative">
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="flex items-center gap-2 pl-2 pr-1.5 py-1 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer border border-transparent hover:border-slate-200"
+              title="User Account Menu"
+            >
+              <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-blue-500 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                {user?.fullName?.charAt(0) || 'U'}
+              </div>
+              <div className="hidden lg:block text-left text-xs">
+                <span className="font-semibold text-slate-800 block leading-tight">{user?.fullName}</span>
+                <span className="text-[10px] text-slate-500 block leading-none capitalize">{user?.role?.replace('_', ' ').toLowerCase()}</span>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+            </button>
+
+            {/* Profile Dropdown Popover */}
+            {showUserMenu && (
+              <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl z-50">
+                <div className="px-3 py-2.5 bg-slate-50 rounded-xl mb-1 border border-slate-100">
+                  <div className="text-xs font-bold text-slate-900 truncate">{user?.fullName}</div>
+                  <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>
+                  <div className="mt-1">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                      <Shield className="w-2.5 h-2.5" />
+                      {user?.role?.replace('_', ' ')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-0.5 pt-1">
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setIsChangePasswordOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+                  >
+                    <KeyRound className="w-4 h-4 text-indigo-600" />
+                    <span>Change Password</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      logout();
+                      navigate('/login');
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4 text-rose-500" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+      />
+    </>
   );
 };
